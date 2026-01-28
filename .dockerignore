@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+.github
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+chartdb-backend
+chartdb-backend.exe
+
+# Test files
+*_test.go
+*.test
+
+# Dependencies - keep frontend/node_modules excluded, will be installed in Docker
+node_modules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Documentation
+README.md
+LICENSE
+*.md
+DOCKER.md

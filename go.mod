@@ -1,6 +1,6 @@
 module github.com/thorved/chartdb-backend
 
-go 1.21
+go 1.25.6
 
 require (
 	github.com/gin-contrib/cors v1.5.0
