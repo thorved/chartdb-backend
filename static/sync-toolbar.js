@@ -30,34 +30,56 @@
         isInitialized: false
     };
 
-    // ChartDB IndexedDB Client
+    // ChartDB IndexedDB Client - Read-only, waits for ChartDB to initialize
     class ChartDBClient {
         constructor() {
             this.dbName = 'ChartDB';
-            this.dbVersion = 130;
+            this.db = null;
         }
 
         async openDB() {
+            // Don't specify version - just open whatever version exists
+            // This avoids conflicts with ChartDB's Dexie.js
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open(this.dbName, this.dbVersion);
+                const request = indexedDB.open(this.dbName);
                 request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
+                request.onsuccess = () => {
+                    this.db = request.result;
+                    resolve(request.result);
+                };
+                // Don't handle onupgradeneeded - let ChartDB create the schema
             });
         }
 
         async getAllFromStore(storeName) {
-            const db = await this.openDB();
-            return new Promise((resolve, reject) => {
-                try {
-                    const tx = db.transaction(storeName, 'readonly');
-                    const store = tx.objectStore(storeName);
-                    const request = store.getAll();
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => resolve(request.result);
-                } catch (e) {
-                    resolve([]);
+            try {
+                const db = await this.openDB();
+                // Check if store exists before trying to access it
+                if (!db.objectStoreNames.contains(storeName)) {
+                    db.close();
+                    return [];
                 }
-            });
+                return new Promise((resolve, reject) => {
+                    try {
+                        const tx = db.transaction(storeName, 'readonly');
+                        const store = tx.objectStore(storeName);
+                        const request = store.getAll();
+                        request.onerror = () => {
+                            db.close();
+                            reject(request.error);
+                        };
+                        request.onsuccess = () => {
+                            db.close();
+                            resolve(request.result);
+                        };
+                    } catch (e) {
+                        db.close();
+                        resolve([]);
+                    }
+                });
+            } catch (e) {
+                return [];
+            }
         }
 
         async getConfig() {
@@ -75,38 +97,55 @@
         }
 
         async getFullDiagram(diagramId) {
-            const db = await this.openDB();
-            const stores = ['diagrams', 'db_tables', 'db_fields', 'db_indexes', 
-                           'db_relationships', 'db_dependencies', 'db_areas', 
-                           'diagram_notes', 'db_custom_types'];
-            
-            const data = {};
-            
-            for (const storeName of stores) {
-                try {
-                    const tx = db.transaction(storeName, 'readonly');
-                    const store = tx.objectStore(storeName);
-                    const allItems = await new Promise((resolve, reject) => {
-                        const request = store.getAll();
-                        request.onerror = () => reject(request.error);
-                        request.onsuccess = () => resolve(request.result);
-                    });
-                    
-                    if (storeName === 'diagrams') {
-                        data.diagram = allItems.find(d => d.id === diagramId);
-                    } else {
-                        data[storeName] = allItems.filter(item => item.diagramId === diagramId);
-                    }
-                } catch (e) {
-                    if (storeName === 'diagrams') {
-                        data.diagram = null;
-                    } else {
-                        data[storeName] = [];
+            try {
+                const db = await this.openDB();
+                const stores = ['diagrams', 'db_tables', 'db_fields', 'db_indexes', 
+                               'db_relationships', 'db_dependencies', 'db_areas', 
+                               'diagram_notes', 'db_custom_types'];
+                
+                const data = {};
+                
+                for (const storeName of stores) {
+                    try {
+                        // Check if store exists
+                        if (!db.objectStoreNames.contains(storeName)) {
+                            if (storeName === 'diagrams') {
+                                data.diagram = null;
+                            } else {
+                                data[storeName] = [];
+                            }
+                            continue;
+                        }
+                        
+                        const tx = db.transaction(storeName, 'readonly');
+                        const store = tx.objectStore(storeName);
+                        const allItems = await new Promise((resolve, reject) => {
+                            const request = store.getAll();
+                            request.onerror = () => reject(request.error);
+                            request.onsuccess = () => resolve(request.result);
+                        });
+                        
+                        if (storeName === 'diagrams') {
+                            data.diagram = allItems.find(d => d.id === diagramId);
+                        } else {
+                            data[storeName] = allItems.filter(item => item.diagramId === diagramId);
+                        }
+                    } catch (e) {
+                        if (storeName === 'diagrams') {
+                            data.diagram = null;
+                        } else {
+                            data[storeName] = [];
+                        }
                     }
                 }
+                
+                db.close();
+                return data;
+            } catch (e) {
+                return { diagram: null, db_tables: [], db_fields: [], db_indexes: [],
+                         db_relationships: [], db_dependencies: [], db_areas: [],
+                         diagram_notes: [], db_custom_types: [] };
             }
-            
-            return data;
         }
     }
 
@@ -264,36 +303,35 @@
         }, CONFIG.debounceDelay);
     }
 
-    // Monitor IndexedDB for changes
+    // Monitor IndexedDB for changes - non-invasive approach
     function setupChangeMonitor() {
-        const originalOpen = indexedDB.open.bind(indexedDB);
+        // Use a MutationObserver-like polling approach instead of intercepting IndexedDB
+        // This avoids breaking Dexie.js and other IndexedDB libraries
         
-        indexedDB.open = function(name, version) {
-            const request = originalOpen(name, version);
-            
-            if (name === 'ChartDB') {
-                request.onsuccess = function(event) {
-                    const db = event.target.result;
-                    
-                    // Intercept transactions to detect writes
-                    const originalTransaction = db.transaction.bind(db);
-                    db.transaction = function(storeNames, mode) {
-                        const tx = originalTransaction(storeNames, mode);
-                        
-                        if (mode === 'readwrite') {
-                            tx.oncomplete = function() {
-                                // Diagram data changed, trigger debounced sync
-                                debouncedSync();
-                            };
-                        }
-                        
-                        return tx;
-                    };
-                };
+        let lastUpdatedAt = null;
+        
+        async function checkForChanges() {
+            if (!state.autoSyncEnabled || !state.isAuthenticated || !state.currentDiagramId) {
+                return;
             }
             
-            return request;
-        };
+            try {
+                const diagram = await chartDB.getDiagram(state.currentDiagramId);
+                if (diagram && diagram.updatedAt) {
+                    const updatedAt = new Date(diagram.updatedAt).getTime();
+                    if (lastUpdatedAt !== null && updatedAt > lastUpdatedAt) {
+                        // Diagram was updated, trigger sync
+                        debouncedSync();
+                    }
+                    lastUpdatedAt = updatedAt;
+                }
+            } catch (e) {
+                // Ignore errors, database might not be ready
+            }
+        }
+        
+        // Poll for changes every 3 seconds
+        setInterval(checkForChanges, 3000);
     }
 
     // Load saved preferences
@@ -493,10 +531,15 @@
         console.log('ChartDB Sync Toolbar initialized');
     }
 
-    // Wait for DOM
+    // Wait for DOM and delay to let ChartDB initialize its database first
+    function delayedInit() {
+        // Wait 2 seconds for ChartDB to initialize its IndexedDB
+        setTimeout(init, 2000);
+    }
+
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', delayedInit);
     } else {
-        init();
+        delayedInit();
     }
 })();
