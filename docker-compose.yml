@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  chartdb-backend:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - GIN_MODE=release
+      - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
+      - DATABASE_PATH=/app/data/chartdb_sync.db
+      # Uncomment to proxy to ChartDB frontend
+      # - CHARTDB_URL=http://chartdb:3000
+    volumes:
+      - chartdb-data:/app/data
+    restart: unless-stopped
+
+  # Uncomment to run ChartDB alongside
+  # chartdb:
+  #   image: ghcr.io/chartdb/chartdb:latest
+  #   ports:
+  #     - "3000:3000"
+  #   restart: unless-stopped
+
+volumes:
+  chartdb-data:
