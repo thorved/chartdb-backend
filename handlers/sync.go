@@ -617,3 +617,297 @@ func deleteDiagramEntities(tx *gorm.DB, diagramID uint) error {
 
 	return nil
 }
+
+// SyncDiagram updates a diagram without creating a new version (for auto-sync)
+// This keeps the data updated but doesn't increment version unless explicitly requested
+func SyncDiagram(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var req models.DiagramPushRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Store the full JSON for the latest version
+	fullJSON, err := json.Marshal(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to serialize diagram"})
+		return
+	}
+
+	// Check if diagram already exists for this user
+	var existingDiagram models.Diagram
+	err = database.DB.Where("diagram_id = ? AND user_id = ?", req.DiagramID, userID).First(&existingDiagram).Error
+
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err == gorm.ErrRecordNotFound {
+		// Create new diagram with version 1
+		diagram := models.Diagram{
+			DiagramID:       req.DiagramID,
+			UserID:          userID,
+			Name:            req.Name,
+			DatabaseType:    req.DatabaseType,
+			DatabaseEdition: req.DatabaseEdition,
+			Version:         1,
+		}
+
+		if err := tx.Create(&diagram).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create diagram"})
+			return
+		}
+
+		// Save all related entities
+		if err := saveDiagramEntities(tx, diagram.ID, &req); err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save diagram entities"})
+			return
+		}
+
+		// Create initial version record
+		version := models.DiagramVersion{
+			DiagramID:   diagram.ID,
+			Version:     1,
+			Data:        string(fullJSON),
+			Description: "Initial sync",
+		}
+		if err := tx.Create(&version).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create version"})
+			return
+		}
+
+		tx.Commit()
+		c.JSON(http.StatusCreated, gin.H{
+			"message":    "Diagram synced successfully",
+			"diagram_id": diagram.DiagramID,
+			"version":    diagram.Version,
+			"is_new":     true,
+		})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// Update existing diagram WITHOUT incrementing version
+	existingDiagram.Name = req.Name
+	existingDiagram.DatabaseType = req.DatabaseType
+	existingDiagram.DatabaseEdition = req.DatabaseEdition
+	existingDiagram.UpdatedAt = time.Now()
+
+	if err := tx.Save(&existingDiagram).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update diagram"})
+		return
+	}
+
+	// Delete existing entities
+	if err := deleteDiagramEntities(tx, existingDiagram.ID); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear existing entities"})
+		return
+	}
+
+	// Save new entities
+	if err := saveDiagramEntities(tx, existingDiagram.ID, &req); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save diagram entities"})
+		return
+	}
+
+	// Update the latest version data (don't create new version)
+	var latestVersion models.DiagramVersion
+	err = tx.Where("diagram_id = ? AND version = ?", existingDiagram.ID, existingDiagram.Version).First(&latestVersion).Error
+	if err == nil {
+		latestVersion.Data = string(fullJSON)
+		latestVersion.CreatedAt = time.Now()
+		tx.Save(&latestVersion)
+	}
+
+	tx.Commit()
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Diagram synced successfully",
+		"diagram_id": existingDiagram.DiagramID,
+		"version":    existingDiagram.Version,
+		"is_new":     false,
+	})
+}
+
+// CreateSnapshot creates a new version snapshot of the diagram
+func CreateSnapshot(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	diagramID := c.Param("diagramId")
+
+	var req struct {
+		Description string `json:"description"`
+	}
+	c.ShouldBindJSON(&req)
+
+	// Find diagram
+	var diagram models.Diagram
+	if err := database.DB.Where("diagram_id = ? AND user_id = ?", diagramID, userID).First(&diagram).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Diagram not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// Get the current latest version data
+	var latestVersion models.DiagramVersion
+	if err := database.DB.Where("diagram_id = ?", diagram.ID).Order("version desc").First(&latestVersion).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get current version"})
+		return
+	}
+
+	tx := database.DB.Begin()
+
+	// Increment diagram version
+	diagram.Version++
+	diagram.UpdatedAt = time.Now()
+	if err := tx.Save(&diagram).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update diagram"})
+		return
+	}
+
+	// Create new version record with the current data
+	description := req.Description
+	if description == "" {
+		description = "Manual snapshot"
+	}
+	newVersion := models.DiagramVersion{
+		DiagramID:   diagram.ID,
+		Version:     diagram.Version,
+		Data:        latestVersion.Data,
+		Description: description,
+	}
+	if err := tx.Create(&newVersion).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create snapshot"})
+		return
+	}
+
+	// Keep only last 10 versions
+	var oldVersions []models.DiagramVersion
+	tx.Where("diagram_id = ?", diagram.ID).
+		Order("version desc").
+		Offset(10).
+		Find(&oldVersions)
+	for _, v := range oldVersions {
+		tx.Delete(&v)
+	}
+
+	tx.Commit()
+	c.JSON(http.StatusCreated, gin.H{
+		"message":    "Snapshot created successfully",
+		"diagram_id": diagram.DiagramID,
+		"version":    diagram.Version,
+	})
+}
+
+// PullAllDiagrams returns all diagrams with their full data for initial sync
+func PullAllDiagrams(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var diagrams []models.Diagram
+	if err := database.DB.Where("user_id = ?", userID).Find(&diagrams).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch diagrams"})
+		return
+	}
+
+	result := make([]map[string]interface{}, 0)
+
+	for _, diagram := range diagrams {
+		// Get latest version data
+		var latestVersion models.DiagramVersion
+		if err := database.DB.Where("diagram_id = ?", diagram.ID).Order("version desc").First(&latestVersion).Error; err != nil {
+			continue // Skip if no version found
+		}
+
+		var data map[string]interface{}
+		if err := json.Unmarshal([]byte(latestVersion.Data), &data); err != nil {
+			continue // Skip if parsing fails
+		}
+		data["version"] = diagram.Version
+		data["server_id"] = diagram.ID
+		result = append(result, data)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"diagrams": result,
+		"count":    len(result),
+	})
+}
+
+// DeleteVersion deletes a specific version/snapshot of a diagram
+func DeleteVersion(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	diagramID := c.Param("diagramId")
+	versionStr := c.Param("version")
+
+	version, err := strconv.Atoi(versionStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid version number"})
+		return
+	}
+
+	// Find diagram
+	var diagram models.Diagram
+	if err := database.DB.Where("diagram_id = ? AND user_id = ?", diagramID, userID).First(&diagram).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Diagram not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// Count total versions
+	var versionCount int64
+	database.DB.Model(&models.DiagramVersion{}).Where("diagram_id = ?", diagram.ID).Count(&versionCount)
+
+	// Don't allow deleting the only version
+	if versionCount <= 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete the only remaining version"})
+		return
+	}
+
+	// Don't allow deleting the latest version
+	if version == diagram.Version {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete the latest version. Create a new snapshot first."})
+		return
+	}
+
+	// Find and delete the version
+	var diagramVersion models.DiagramVersion
+	if err := database.DB.Where("diagram_id = ? AND version = ?", diagram.ID, version).First(&diagramVersion).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Version not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	if err := database.DB.Delete(&diagramVersion).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete version"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Version deleted successfully",
+		"version": version,
+	})
+}

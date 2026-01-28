@@ -36,6 +36,19 @@
             />
           </div>
 
+          <!-- Sync option on login -->
+          <div class="flex items-center">
+            <input
+              id="syncOnLogin"
+              v-model="syncOnLogin"
+              type="checkbox"
+              class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+            />
+            <label for="syncOnLogin" class="ml-2 block text-sm text-gray-700">
+              Replace local diagrams with cloud diagrams on login
+            </label>
+          </div>
+
           <div v-if="error" class="text-red-600 text-sm text-center">
             {{ error }}
           </div>
@@ -45,7 +58,7 @@
             :disabled="loading"
             class="btn btn-primary w-full"
           >
-            {{ loading ? 'Signing in...' : 'Sign in' }}
+            {{ loading ? (syncing ? 'Syncing diagrams...' : 'Signing in...') : 'Sign in' }}
           </button>
         </form>
 
@@ -66,6 +79,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { chartDB } from '../chartdb-client'
 
 export default {
   name: 'Login',
@@ -75,6 +89,8 @@ export default {
     const password = ref('')
     const error = ref('')
     const loading = ref(false)
+    const syncing = ref(false)
+    const syncOnLogin = ref(true)
 
     const handleLogin = async () => {
       error.value = ''
@@ -82,6 +98,32 @@ export default {
 
       try {
         await api.login(email.value, password.value)
+        
+        // If sync on login is enabled, pull all cloud diagrams and replace local
+        if (syncOnLogin.value) {
+          syncing.value = true
+          try {
+            const result = await api.pullAllDiagrams()
+            if (result.diagrams && result.diagrams.length > 0) {
+              // Reopen/create the database
+              await chartDB.reopen()
+              
+              // Clear all existing local diagrams first
+              await chartDB.clearAllDiagrams()
+              
+              // Save all cloud diagrams to local IndexedDB
+              for (const diagramData of result.diagrams) {
+                await chartDB.saveDiagramFull(diagramData)
+              }
+              console.log(`Synced ${result.diagrams.length} diagrams from cloud`)
+            }
+          } catch (syncErr) {
+            console.error('Failed to sync diagrams on login:', syncErr)
+            // Don't block login if sync fails
+          }
+          syncing.value = false
+        }
+        
         router.push('/dashboard')
       } catch (err) {
         error.value = err.message
@@ -95,6 +137,8 @@ export default {
       password,
       error,
       loading,
+      syncing,
+      syncOnLogin,
       handleLogin
     }
   }

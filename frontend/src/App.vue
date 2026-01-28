@@ -24,6 +24,7 @@
 <script>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { chartDB } from './chartdb-client'
 
 export default {
   name: 'App',
@@ -43,9 +44,19 @@ export default {
       }
     }
 
-    const logout = () => {
+    const logout = async () => {
+      // Clear all local diagrams on logout
+      try {
+        await chartDB.clearAllDiagrams()
+        console.log('Local diagrams cleared on logout')
+      } catch (err) {
+        console.error('Failed to clear local diagrams:', err)
+      }
+      
       localStorage.removeItem('chartdb_sync_token')
       localStorage.removeItem('chartdb_sync_user')
+      localStorage.removeItem('chartdb_sync_auto')
+      localStorage.removeItem('chartdb_sync_interval')
       user.value = null
       router.push('/login')
     }

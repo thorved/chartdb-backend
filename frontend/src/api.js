@@ -87,6 +87,27 @@ class ApiService {
     })
   }
 
+  // Sync diagram without creating new version (for auto-sync)
+  async syncDiagram(diagramData) {
+    return this.request('/diagrams/sync', {
+      method: 'POST',
+      body: JSON.stringify(diagramData)
+    })
+  }
+
+  // Pull all diagrams for login sync
+  async pullAllDiagrams() {
+    return this.request('/diagrams/pull-all')
+  }
+
+  // Create a manual snapshot/version of a diagram
+  async createSnapshot(diagramId, description = '') {
+    return this.request(`/diagrams/${diagramId}/snapshot`, {
+      method: 'POST',
+      body: JSON.stringify({ description })
+    })
+  }
+
   async pullDiagram(diagramId, version = null) {
     const query = version ? `?version=${version}` : ''
     return this.request(`/diagrams/pull/${diagramId}${query}`)
@@ -100,6 +121,13 @@ class ApiService {
 
   async getVersions(diagramId) {
     return this.request(`/diagrams/${diagramId}/versions`)
+  }
+
+  // Delete a specific version/snapshot
+  async deleteVersion(diagramId, version) {
+    return this.request(`/diagrams/${diagramId}/versions/${version}`, {
+      method: 'DELETE'
+    })
   }
 }
 

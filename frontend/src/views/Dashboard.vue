@@ -9,6 +9,55 @@
       </div>
     </div>
 
+    <!-- Auto-Sync Control Panel -->
+    <div class="card mb-6 bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-200">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <svg class="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <div>
+            <p class="font-medium text-gray-800">Auto-Sync</p>
+            <p class="text-sm text-gray-600">Automatically sync diagrams to the server</p>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-4">
+          <!-- Sync Status Indicator -->
+          <div class="flex items-center gap-2">
+            <span :class="['w-3 h-3 rounded-full', syncStatusClass]"></span>
+            <span class="text-sm text-gray-600">{{ syncStatusText }}</span>
+          </div>
+
+          <!-- Interval Selector -->
+          <select v-model="autoSyncInterval" @change="updateAutoSyncInterval" 
+                  class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            <option :value="30000">Every 30 seconds</option>
+            <option :value="60000">Every 1 minute</option>
+            <option :value="300000">Every 5 minutes</option>
+            <option :value="600000">Every 10 minutes</option>
+          </select>
+
+          <!-- Auto-Sync Toggle -->
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" v-model="autoSyncEnabled" @change="toggleAutoSync" class="sr-only peer">
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+            <span class="ms-2 text-sm font-medium text-gray-700">{{ autoSyncEnabled ? 'On' : 'Off' }}</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Last Sync Info -->
+      <div v-if="lastSyncTime" class="mt-3 pt-3 border-t border-indigo-200">
+        <p class="text-xs text-gray-500">
+          Last synced: {{ formatDate(lastSyncTime) }}
+          <span v-if="nextSyncTime && autoSyncEnabled" class="ml-2">
+            • Next sync in: {{ nextSyncCountdown }}
+          </span>
+        </p>
+      </div>
+    </div>
+
     <!-- Database Status -->
     <div v-if="!dbAvailable" class="card mb-6 border-yellow-300 bg-yellow-50">
       <div class="flex items-center gap-3">
@@ -117,11 +166,18 @@
               Updated: {{ formatDate(diagram.updated_at) }}
             </div>
 
-            <div class="mt-4 flex gap-2">
+            <div class="mt-4 flex gap-2 flex-wrap">
               <button @click="pullDiagram(diagram)" 
                       :disabled="pulling === diagram.diagram_id"
                       class="btn btn-success text-sm flex-1">
                 {{ pulling === diagram.diagram_id ? 'Pulling...' : 'Pull to Browser' }}
+              </button>
+              <button @click="createSnapshot(diagram)" 
+                      :disabled="creatingSnapshot === diagram.diagram_id"
+                      class="btn btn-primary text-sm" title="Create Version Snapshot">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                </svg>
               </button>
               <button @click="viewVersions(diagram)" class="btn btn-secondary text-sm">
                 History
@@ -184,11 +240,21 @@
               <p class="text-sm text-gray-500 mt-1">{{ version.description || 'No description' }}</p>
               <p class="text-xs text-gray-400 mt-1">{{ formatDate(version.created_at) }}</p>
             </div>
-            <button @click="pullVersion(versionsTarget.diagram_id, version.version)" 
-                    :disabled="pulling"
-                    class="btn btn-secondary text-sm">
-              {{ pulling === `${versionsTarget.diagram_id}-${version.version}` ? 'Pulling...' : 'Pull This' }}
-            </button>
+            <div class="flex gap-2">
+              <button @click="pullVersion(versionsTarget.diagram_id, version.version)" 
+                      :disabled="pulling"
+                      class="btn btn-secondary text-sm">
+                {{ pulling === `${versionsTarget.diagram_id}-${version.version}` ? 'Pulling...' : 'Pull This' }}
+              </button>
+              <button v-if="version.version !== versionsTarget.version && versions.length > 1"
+                      @click="deleteVersion(versionsTarget.diagram_id, version.version)"
+                      :disabled="deletingVersion === version.version"
+                      class="btn btn-danger text-sm" title="Delete this snapshot">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -204,7 +270,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { api } from '../api'
 import { chartDB } from '../chartdb-client'
 
@@ -227,8 +293,155 @@ export default {
     const versionsTarget = ref(null)
     const versions = ref([])
     const versionsLoading = ref(false)
+    const deletingVersion = ref(null)
     
     const toast = ref(null)
+
+    // Snapshot state
+    const creatingSnapshot = ref(null)
+
+    // Auto-sync state
+    const autoSyncEnabled = ref(false)
+    const autoSyncInterval = ref(60000)
+    const lastSyncTime = ref(null)
+    const nextSyncTime = ref(null)
+    const isSyncing = ref(false)
+    const syncStatus = ref('idle') // idle, syncing, success, error
+    let autoSyncTimer = null
+    let countdownTimer = null
+
+    // Computed properties for auto-sync
+    const syncStatusClass = computed(() => {
+      switch (syncStatus.value) {
+        case 'syncing': return 'bg-yellow-400 animate-pulse'
+        case 'success': return 'bg-green-500'
+        case 'error': return 'bg-red-500'
+        default: return 'bg-gray-400'
+      }
+    })
+
+    const syncStatusText = computed(() => {
+      switch (syncStatus.value) {
+        case 'syncing': return 'Syncing...'
+        case 'success': return 'Synced'
+        case 'error': return 'Error'
+        default: return 'Idle'
+      }
+    })
+
+    const nextSyncCountdown = computed(() => {
+      if (!nextSyncTime.value) return ''
+      const diff = Math.max(0, nextSyncTime.value - Date.now())
+      const seconds = Math.floor(diff / 1000)
+      if (seconds >= 60) {
+        return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+      }
+      return `${seconds}s`
+    })
+
+    // Load auto-sync preferences from localStorage
+    const loadAutoSyncPreferences = () => {
+      autoSyncEnabled.value = localStorage.getItem('chartdb_sync_auto') === 'true'
+      autoSyncInterval.value = parseInt(localStorage.getItem('chartdb_sync_interval')) || 60000
+    }
+
+    // Save auto-sync preferences to localStorage
+    const saveAutoSyncPreferences = () => {
+      localStorage.setItem('chartdb_sync_auto', autoSyncEnabled.value)
+      localStorage.setItem('chartdb_sync_interval', autoSyncInterval.value)
+    }
+
+    // Perform auto-sync for all local diagrams (uses sync endpoint - no version increment)
+    const performAutoSync = async () => {
+      if (isSyncing.value || !dbAvailable.value) return
+      
+      isSyncing.value = true
+      syncStatus.value = 'syncing'
+
+      try {
+        // Sync all local diagrams to server (without creating new versions)
+        for (const diagram of localDiagrams.value) {
+          const fullDiagram = await chartDB.getDiagramFull(diagram.id)
+          // Use syncDiagram instead of pushDiagram for auto-sync
+          await api.syncDiagram(fullDiagram)
+        }
+
+        // Reload synced diagrams
+        await loadSyncedDiagrams()
+        
+        syncStatus.value = 'success'
+        lastSyncTime.value = new Date().toISOString()
+        
+        // Schedule next sync time
+        if (autoSyncEnabled.value) {
+          nextSyncTime.value = Date.now() + autoSyncInterval.value
+        }
+      } catch (err) {
+        console.error('Auto-sync failed:', err)
+        syncStatus.value = 'error'
+        showToast('Auto-sync failed: ' + err.message, 'error')
+      } finally {
+        isSyncing.value = false
+      }
+    }
+
+    // Start auto-sync timer
+    const startAutoSync = () => {
+      stopAutoSync()
+      if (autoSyncEnabled.value) {
+        // Initial sync
+        performAutoSync()
+        
+        // Set up interval
+        autoSyncTimer = setInterval(performAutoSync, autoSyncInterval.value)
+        
+        // Set up countdown timer
+        countdownTimer = setInterval(() => {
+          // Force reactivity update for countdown
+          if (nextSyncTime.value) {
+            nextSyncTime.value = nextSyncTime.value
+          }
+        }, 1000)
+        
+        console.log(`Auto-sync started with interval: ${autoSyncInterval.value}ms`)
+      }
+    }
+
+    // Stop auto-sync timer
+    const stopAutoSync = () => {
+      if (autoSyncTimer) {
+        clearInterval(autoSyncTimer)
+        autoSyncTimer = null
+      }
+      if (countdownTimer) {
+        clearInterval(countdownTimer)
+        countdownTimer = null
+      }
+      nextSyncTime.value = null
+      console.log('Auto-sync stopped')
+    }
+
+    // Toggle auto-sync on/off
+    const toggleAutoSync = () => {
+      saveAutoSyncPreferences()
+      if (autoSyncEnabled.value) {
+        startAutoSync()
+        showToast('Auto-sync enabled!')
+      } else {
+        stopAutoSync()
+        syncStatus.value = 'idle'
+        showToast('Auto-sync disabled')
+      }
+    }
+
+    // Update auto-sync interval
+    const updateAutoSyncInterval = () => {
+      saveAutoSyncPreferences()
+      if (autoSyncEnabled.value) {
+        startAutoSync() // Restart with new interval
+        showToast(`Sync interval updated to ${autoSyncInterval.value / 1000} seconds`)
+      }
+    }
 
     const showToast = (message, type = 'success') => {
       toast.value = { message, type }
@@ -376,6 +589,21 @@ export default {
       }
     }
 
+    // Delete a specific version/snapshot
+    const deleteVersion = async (diagramId, version) => {
+      try {
+        deletingVersion.value = version
+        await api.deleteVersion(diagramId, version)
+        // Reload versions
+        versions.value = await api.getVersions(diagramId)
+        showToast(`Version ${version} deleted!`)
+      } catch (err) {
+        showToast('Failed to delete version: ' + err.message, 'error')
+      } finally {
+        deletingVersion.value = null
+      }
+    }
+
     const confirmDelete = (diagram) => {
       deleteTarget.value = diagram
     }
@@ -383,10 +611,22 @@ export default {
     const handleDelete = async () => {
       try {
         deleting.value = true
-        await api.deleteDiagram(deleteTarget.value.diagram_id)
+        const diagramId = deleteTarget.value.diagram_id
+        
+        // Delete from server
+        await api.deleteDiagram(diagramId)
+        
+        // Also delete from local IndexedDB
+        try {
+          await chartDB.deleteDiagramFull(diagramId)
+          console.log('Deleted from local IndexedDB:', diagramId)
+        } catch (localErr) {
+          console.warn('Could not delete from local IndexedDB:', localErr)
+        }
+        
         deleteTarget.value = null
-        await loadSyncedDiagrams()
-        showToast('Deleted from server!')
+        await loadAll() // Reload both local and server diagrams
+        showToast('Deleted from server and browser!')
       } catch (err) {
         showToast('Failed to delete: ' + err.message, 'error')
       } finally {
@@ -394,7 +634,33 @@ export default {
       }
     }
 
-    onMounted(loadAll)
+    // Create a manual snapshot/version of a diagram
+    const createSnapshot = async (diagram) => {
+      try {
+        creatingSnapshot.value = diagram.diagram_id
+        await api.createSnapshot(diagram.diagram_id, 'Manual snapshot')
+        await loadSyncedDiagrams()
+        showToast(`Snapshot created for "${diagram.name}"!`)
+      } catch (err) {
+        showToast('Failed to create snapshot: ' + err.message, 'error')
+      } finally {
+        creatingSnapshot.value = null
+      }
+    }
+
+    onMounted(() => {
+      loadAutoSyncPreferences()
+      loadAll().then(() => {
+        // Start auto-sync if it was enabled
+        if (autoSyncEnabled.value) {
+          startAutoSync()
+        }
+      })
+    })
+
+    onUnmounted(() => {
+      stopAutoSync()
+    })
 
     return {
       loading,
@@ -411,6 +677,23 @@ export default {
       versions,
       versionsLoading,
       toast,
+      // Snapshot
+      creatingSnapshot,
+      createSnapshot,
+      // Delete version
+      deletingVersion,
+      deleteVersion,
+      // Auto-sync
+      autoSyncEnabled,
+      autoSyncInterval,
+      lastSyncTime,
+      nextSyncTime,
+      syncStatusClass,
+      syncStatusText,
+      nextSyncCountdown,
+      toggleAutoSync,
+      updateAutoSyncInterval,
+      // Methods
       refreshLocal,
       getSyncedDiagram,
       formatDate,

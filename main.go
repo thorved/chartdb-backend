@@ -30,8 +30,14 @@ func main() {
 	config.AllowCredentials = true
 	r.Use(cors.New(config))
 
-	// Serve Vue SPA static files for /sync/ routes
+	// Serve Vue SPA static files for /sync/ routes (sync dashboard)
 	r.Use(static.Serve("/sync", static.LocalFile("./frontend/dist", true)))
+
+	// Serve static assets (sync toolbar, etc.)
+	r.Use(static.Serve("/static", static.LocalFile("./static", true)))
+
+	// Serve ChartDB React app at root /
+	r.Use(static.Serve("/", static.LocalFile("./chartdb/dist", true)))
 
 	// Setup routes
 	routes.SetupRoutes(r)
@@ -43,7 +49,8 @@ func main() {
 	}
 
 	log.Printf("Starting ChartDB Backend on port %s", port)
-	log.Printf("Dashboard available at http://localhost:%s/sync/", port)
+	log.Printf("ChartDB App available at http://localhost:%s/", port)
+	log.Printf("Sync Dashboard available at http://localhost:%s/sync/", port)
 
 	if err := r.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)

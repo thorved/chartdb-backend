@@ -596,6 +596,32 @@ class ChartDBClient {
       return []
     }
   }
+
+  // Clear all diagrams and related data from IndexedDB
+  async clearAllDiagrams() {
+    await this.ensureOpen()
+    
+    return new Promise((resolve, reject) => {
+      const stores = ['diagrams', 'db_tables', 'db_relationships', 'db_dependencies', 'areas', 'notes', 'db_custom_types', 'diagram_filters']
+      const tx = this.db.transaction(stores, 'readwrite')
+      
+      tx.oncomplete = () => {
+        console.log('All diagrams cleared from IndexedDB')
+        resolve(true)
+      }
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(new Error('Transaction aborted'))
+      
+      try {
+        for (const storeName of stores) {
+          const store = tx.objectStore(storeName)
+          store.clear()
+        }
+      } catch (error) {
+        reject(error)
+      }
+    })
+  }
 }
 
 export const chartDB = new ChartDBClient()
