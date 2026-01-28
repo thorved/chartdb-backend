@@ -1,0 +1,3 @@
+[submodule "chartdb"]
+	path = chartdb
+	url = https://github.com/chartdb/chartdb
