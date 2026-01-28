@@ -32,7 +32,7 @@ WORKDIR /app/chartdb
 
 # Copy ChartDB submodule files
 COPY chartdb/package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY chartdb/ .
 
