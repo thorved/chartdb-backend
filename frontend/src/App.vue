@@ -22,47 +22,55 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { api } from './api'
 import { chartDB } from './chartdb-client'
+import { isAuthenticated, checkAuth } from './main'
 
 export default {
   name: 'App',
   setup() {
     const router = useRouter()
-    const route = useRoute()
     const user = ref(null)
 
-    const isAuthenticated = computed(() => {
-      return !!localStorage.getItem('chartdb_sync_token')
-    })
-
-    const loadUser = () => {
-      const userData = localStorage.getItem('chartdb_sync_user')
-      if (userData) {
-        user.value = JSON.parse(userData)
+    const loadUser = async () => {
+      try {
+        user.value = await api.getCurrentUser()
+      } catch (err) {
+        user.value = null
       }
     }
 
     const logout = async () => {
-      // Clear all local diagrams on logout
+      // Clear local diagrams
       try {
         await chartDB.clearAllDiagrams()
-        console.log('Local diagrams cleared on logout')
       } catch (err) {
         console.error('Failed to clear local diagrams:', err)
       }
       
-      localStorage.removeItem('chartdb_sync_token')
-      localStorage.removeItem('chartdb_sync_user')
-      localStorage.removeItem('chartdb_sync_auto')
-      localStorage.removeItem('chartdb_sync_interval')
+      // Call logout API
+      try {
+        await api.logout()
+      } catch (err) {
+        console.error('Logout API error:', err)
+      }
+      
+      // Update local state
       user.value = null
+      isAuthenticated.value = false
+      
+      // Redirect to login
       router.push('/login')
     }
 
-    onMounted(loadUser)
-    watch(route, loadUser)
+    onMounted(async () => {
+      await checkAuth()
+      if (isAuthenticated.value) {
+        await loadUser()
+      }
+    })
 
     return {
       user,

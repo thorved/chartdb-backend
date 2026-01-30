@@ -51,6 +51,9 @@ func Signup(c *gin.Context) {
 		return
 	}
 
+	// Set auth cookie
+	SetAuthCookie(c, token)
+
 	c.JSON(http.StatusCreated, models.AuthResponse{
 		Token: token,
 		User: models.UserResponse{
@@ -89,6 +92,9 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// Set auth cookie
+	SetAuthCookie(c, token)
+
 	c.JSON(http.StatusOK, models.AuthResponse{
 		Token: token,
 		User: models.UserResponse{
@@ -97,6 +103,12 @@ func Login(c *gin.Context) {
 			Name:  user.Name,
 		},
 	})
+}
+
+// Logout handles user logout
+func Logout(c *gin.Context) {
+	ClearAuthCookie(c)
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
 // GetCurrentUser returns the current authenticated user

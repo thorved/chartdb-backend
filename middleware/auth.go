@@ -64,24 +64,34 @@ func ValidateToken(tokenString string) (*Claims, error) {
 }
 
 // AuthMiddleware is the JWT authentication middleware
+// Supports both cookie-based and header-based authentication
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-			c.Abort()
-			return
+		var tokenString string
+
+		// First, try to get token from cookie
+		cookieToken, err := c.Cookie("auth_token")
+		if err == nil && cookieToken != "" {
+			tokenString = cookieToken
+		} else {
+			// Fall back to Authorization header
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+				c.Abort()
+				return
+			}
+
+			// Extract token from "Bearer <token>"
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
+				c.Abort()
+				return
+			}
+			tokenString = parts[1]
 		}
 
-		// Extract token from "Bearer <token>"
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
 		claims, err := ValidateToken(tokenString)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})

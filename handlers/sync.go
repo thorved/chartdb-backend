@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -423,7 +424,7 @@ func saveDiagramEntities(tx *gorm.DB, diagramID uint, req *models.DiagramPushReq
 			Order:              t.Order,
 			Expanded:           t.Expanded,
 			ParentAreaID:       t.ParentAreaID,
-			CreatedAt:          time.Unix(t.CreatedAt/1000, 0),
+			CreatedAt:          t.CreatedAt,
 		}
 		if err := tx.Create(&table).Error; err != nil {
 			return err
@@ -625,6 +626,7 @@ func SyncDiagram(c *gin.Context) {
 
 	var req models.DiagramPushRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Printf("SyncDiagram bind error: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

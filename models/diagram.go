@@ -53,22 +53,22 @@ type DiagramVersion struct {
 
 // DBTable represents a database table
 type DBTable struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	TableID            string    `gorm:"not null" json:"table_id"` // Original ChartDB ID
-	DiagramID          uint      `gorm:"index;not null" json:"diagram_id"`
-	Name               string    `gorm:"not null" json:"name"`
-	Schema             string    `json:"schema,omitempty"`
-	X                  float64   `json:"x"`
-	Y                  float64   `json:"y"`
-	Width              float64   `json:"width,omitempty"`
-	Color              string    `json:"color"`
-	IsView             bool      `json:"is_view"`
-	IsMaterializedView bool      `json:"is_materialized_view,omitempty"`
-	Comments           string    `json:"comments,omitempty"`
-	Order              int       `json:"order,omitempty"`
-	Expanded           bool      `json:"expanded,omitempty"`
-	ParentAreaID       string    `json:"parent_area_id,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                 uint    `gorm:"primaryKey" json:"id"`
+	TableID            string  `gorm:"not null" json:"table_id"` // Original ChartDB ID
+	DiagramID          uint    `gorm:"index;not null" json:"diagram_id"`
+	Name               string  `gorm:"not null" json:"name"`
+	Schema             string  `json:"schema,omitempty"`
+	X                  float64 `json:"x"`
+	Y                  float64 `json:"y"`
+	Width              float64 `json:"width,omitempty"`
+	Color              string  `json:"color"`
+	IsView             bool    `json:"is_view"`
+	IsMaterializedView bool    `json:"is_materialized_view,omitempty"`
+	Comments           string  `json:"comments,omitempty"`
+	Order              int     `json:"order,omitempty"`
+	Expanded           bool    `json:"expanded,omitempty"`
+	ParentAreaID       string  `json:"parent_area_id,omitempty"`
+	CreatedAt          int64   `json:"created_at"`
 
 	// Relations
 	Fields  []DBField `gorm:"foreignKey:TableID;references:ID" json:"fields,omitempty"`

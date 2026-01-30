@@ -7,6 +7,27 @@
           <p class="mt-2 text-gray-600">Sign in to your account</p>
         </div>
 
+        <!-- OIDC Login Button -->
+        <div v-if="oidcEnabled" class="mb-6">
+          <a
+            href="/sync/api/auth/oidc/login"
+            class="w-full flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+          >
+            <svg class="h-5 w-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
+            </svg>
+            Sign in with SSO
+          </a>
+          <div class="relative mt-6">
+            <div class="absolute inset-0 flex items-center">
+              <div class="w-full border-t border-gray-300"></div>
+            </div>
+            <div class="relative flex justify-center text-sm">
+              <span class="px-2 bg-white text-gray-500">Or continue with</span>
+            </div>
+          </div>
+        </div>
+
         <form @submit.prevent="handleLogin" class="space-y-6">
           <div>
             <label for="email" class="block text-sm font-medium text-gray-700 mb-1">
@@ -36,19 +57,6 @@
             />
           </div>
 
-          <!-- Sync option on login -->
-          <div class="flex items-center">
-            <input
-              id="syncOnLogin"
-              v-model="syncOnLogin"
-              type="checkbox"
-              class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-            />
-            <label for="syncOnLogin" class="ml-2 block text-sm text-gray-700">
-              Replace local diagrams with cloud diagrams on login
-            </label>
-          </div>
-
           <div v-if="error" class="text-red-600 text-sm text-center">
             {{ error }}
           </div>
@@ -58,7 +66,7 @@
             :disabled="loading"
             class="btn btn-primary w-full"
           >
-            {{ loading ? (syncing ? 'Syncing diagrams...' : 'Signing in...') : 'Sign in' }}
+            {{ loading ? 'Signing in...' : 'Sign in' }}
           </button>
         </form>
 
@@ -76,10 +84,9 @@
 </template>
 
 <script>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { chartDB } from '../chartdb-client'
 
 export default {
   name: 'Login',
@@ -89,8 +96,18 @@ export default {
     const password = ref('')
     const error = ref('')
     const loading = ref(false)
-    const syncing = ref(false)
-    const syncOnLogin = ref(true)
+    const oidcEnabled = ref(false)
+
+    const checkOIDCEnabled = async () => {
+      try {
+        const response = await fetch('/sync/api/auth/oidc/enabled')
+        const data = await response.json()
+        oidcEnabled.value = data.enabled
+      } catch (err) {
+        console.error('Failed to check OIDC status:', err)
+        oidcEnabled.value = false
+      }
+    }
 
     const handleLogin = async () => {
       error.value = ''
@@ -99,46 +116,24 @@ export default {
       try {
         await api.login(email.value, password.value)
         
-        // If sync on login is enabled, pull all cloud diagrams and replace local
-        if (syncOnLogin.value) {
-          syncing.value = true
-          try {
-            const result = await api.pullAllDiagrams()
-            if (result.diagrams && result.diagrams.length > 0) {
-              // Reopen/create the database
-              await chartDB.reopen()
-              
-              // Clear all existing local diagrams first
-              await chartDB.clearAllDiagrams()
-              
-              // Save all cloud diagrams to local IndexedDB
-              for (const diagramData of result.diagrams) {
-                await chartDB.saveDiagramFull(diagramData)
-              }
-              console.log(`Synced ${result.diagrams.length} diagrams from cloud`)
-            }
-          } catch (syncErr) {
-            console.error('Failed to sync diagrams on login:', syncErr)
-            // Don't block login if sync fails
-          }
-          syncing.value = false
-        }
-        
-        router.push('/dashboard')
+        // Redirect to sync page to pull cloud data
+        router.push('/sync')
       } catch (err) {
         error.value = err.message
-      } finally {
         loading.value = false
       }
     }
+
+    onMounted(() => {
+      checkOIDCEnabled()
+    })
 
     return {
       email,
       password,
       error,
       loading,
-      syncing,
-      syncOnLogin,
+      oidcEnabled,
       handleLogin
     }
   }

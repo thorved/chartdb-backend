@@ -2,17 +2,15 @@ const API_BASE = '/sync/api'
 
 class ApiService {
   constructor() {
-    this.token = localStorage.getItem('chartdb_sync_token')
+    // Token is now stored in httpOnly cookie, not localStorage
+    // We just keep user info in localStorage for convenience
   }
 
-  setToken(token) {
-    this.token = token
-    localStorage.setItem('chartdb_sync_token', token)
+  setUser(user) {
+    localStorage.setItem('chartdb_sync_user', JSON.stringify(user))
   }
 
-  clearToken() {
-    this.token = null
-    localStorage.removeItem('chartdb_sync_token')
+  clearAuth() {
     localStorage.removeItem('chartdb_sync_user')
   }
 
@@ -22,17 +20,17 @@ class ApiService {
       ...options.headers
     }
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`
-    }
+    // Cookies are automatically sent with requests
+    // No need to manually set Authorization header
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
-      headers
+      headers,
+      credentials: 'include' // Important: include cookies in requests
     })
 
     if (response.status === 401) {
-      this.clearToken()
+      this.clearAuth()
       window.location.href = '/sync/login'
       throw new Error('Unauthorized')
     }
@@ -52,8 +50,7 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ email, password, name })
     })
-    this.setToken(data.token)
-    localStorage.setItem('chartdb_sync_user', JSON.stringify(data.user))
+    this.setUser(data.user)
     return data
   }
 
@@ -62,9 +59,19 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ email, password })
     })
-    this.setToken(data.token)
-    localStorage.setItem('chartdb_sync_user', JSON.stringify(data.user))
+    this.setUser(data.user)
     return data
+  }
+
+  async logout() {
+    try {
+      await this.request('/auth/logout', {
+        method: 'POST'
+      })
+    } finally {
+      this.clearAuth()
+      window.location.href = '/sync/login'
+    }
   }
 
   async getCurrentUser() {
@@ -95,7 +102,7 @@ class ApiService {
     })
   }
 
-  // Pull all diagrams for login sync
+  // Pull all diagrams
   async pullAllDiagrams() {
     return this.request('/diagrams/pull-all')
   }

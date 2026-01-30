@@ -216,13 +216,18 @@ class ChartDBClient {
       
       try {
         // Prepare diagram record
+        // ChartDB expects createdAt as a number (timestamp), not Date
+        const createdAt = diagramData.createdAt 
+          ? (typeof diagramData.createdAt === 'number' ? diagramData.createdAt : new Date(diagramData.createdAt).getTime())
+          : Date.now()
+        
         const diagramRecord = {
           id: diagramData.id,
           name: diagramData.name,
           databaseType: diagramData.databaseType,
           databaseEdition: diagramData.databaseEdition,
-          createdAt: diagramData.createdAt ? new Date(diagramData.createdAt) : new Date(),
-          updatedAt: new Date()
+          createdAt: createdAt,
+          updatedAt: Date.now()
         }
 
         // Save diagram
@@ -244,20 +249,31 @@ class ChartDBClient {
         }
         
         for (const table of diagramData.tables || []) {
+          // Skip tables without id
+          if (!table.id) {
+            console.warn('Skipping table without id:', table)
+            continue
+          }
+          
+          // ChartDB expects createdAt as number (timestamp)
+          const tableCreatedAt = table.createdAt
+            ? (typeof table.createdAt === 'number' ? table.createdAt : new Date(table.createdAt).getTime())
+            : Date.now()
+          
           tableStore.put({
             id: table.id,
             diagramId: diagramData.id,
             name: table.name,
             schema: table.schema,
-            x: table.x,
-            y: table.y,
+            x: table.x || 0,
+            y: table.y || 0,
             width: table.width,
             color: table.color,
-            isView: table.isView,
+            isView: table.isView || false,
             isMaterializedView: table.isMaterializedView,
-            comment: table.comments,
+            comments: table.comments,
             order: table.order,
-            createdAt: table.createdAt,
+            createdAt: tableCreatedAt,
             fields: table.fields || [],
             indexes: table.indexes || [],
             expanded: table.expanded,
@@ -280,6 +296,17 @@ class ChartDBClient {
         }
         
         for (const rel of diagramData.relationships || []) {
+          // Skip relationships without id
+          if (!rel.id) {
+            console.warn('Skipping relationship without id:', rel)
+            continue
+          }
+          
+          // ChartDB expects createdAt as number (timestamp)
+          const relCreatedAt = rel.createdAt
+            ? (typeof rel.createdAt === 'number' ? rel.createdAt : new Date(rel.createdAt).getTime())
+            : Date.now()
+          
           relStore.put({
             id: rel.id,
             diagramId: diagramData.id,
@@ -293,7 +320,7 @@ class ChartDBClient {
             sourceCardinality: rel.sourceCardinality,
             targetCardinality: rel.targetCardinality,
             type: `${rel.sourceCardinality}_${rel.targetCardinality}`,
-            createdAt: rel.createdAt
+            createdAt: relCreatedAt
           })
         }
 
@@ -312,6 +339,17 @@ class ChartDBClient {
         }
         
         for (const dep of diagramData.dependencies || []) {
+          // Skip dependencies without id
+          if (!dep.id) {
+            console.warn('Skipping dependency without id:', dep)
+            continue
+          }
+          
+          // ChartDB expects createdAt as number (timestamp)
+          const depCreatedAt = dep.createdAt
+            ? (typeof dep.createdAt === 'number' ? dep.createdAt : new Date(dep.createdAt).getTime())
+            : Date.now()
+          
           depStore.put({
             id: dep.id,
             diagramId: diagramData.id,
@@ -319,7 +357,7 @@ class ChartDBClient {
             tableId: dep.tableId,
             dependentSchema: dep.dependentSchema,
             dependentTableId: dep.dependentTableId,
-            createdAt: dep.createdAt
+            createdAt: depCreatedAt
           })
         }
 
@@ -338,12 +376,18 @@ class ChartDBClient {
         }
         
         for (const area of diagramData.areas || []) {
+          // Skip areas without id
+          if (!area.id) {
+            console.warn('Skipping area without id:', area)
+            continue
+          }
+          
           areaStore.put({
             id: area.id,
             diagramId: diagramData.id,
             name: area.name,
-            x: area.x,
-            y: area.y,
+            x: area.x || 0,
+            y: area.y || 0,
             width: area.width,
             height: area.height,
             color: area.color,
@@ -366,12 +410,18 @@ class ChartDBClient {
         }
         
         for (const note of diagramData.notes || []) {
+          // Skip notes without id
+          if (!note.id) {
+            console.warn('Skipping note without id:', note)
+            continue
+          }
+          
           noteStore.put({
             id: note.id,
             diagramId: diagramData.id,
             content: note.content,
-            x: note.x,
-            y: note.y,
+            x: note.x || 0,
+            y: note.y || 0,
             width: note.width,
             height: note.height,
             color: note.color,
@@ -394,6 +444,12 @@ class ChartDBClient {
         }
         
         for (const ct of diagramData.customTypes || []) {
+          // Skip custom types without id
+          if (!ct.id) {
+            console.warn('Skipping custom type without id:', ct)
+            continue
+          }
+          
           ctStore.put({
             id: ct.id,
             diagramId: diagramData.id,

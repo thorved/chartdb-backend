@@ -7,14 +7,17 @@ import (
 )
 
 type User struct {
-	ID        uint           `gorm:"primaryKey" json:"id"`
-	Email     string         `gorm:"uniqueIndex;not null" json:"email"`
-	Password  string         `gorm:"not null" json:"-"`
-	Name      string         `json:"name"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-	Diagrams  []Diagram      `gorm:"foreignKey:UserID" json:"diagrams,omitempty"`
+	ID           uint           `gorm:"primaryKey" json:"id"`
+	Email        string         `gorm:"uniqueIndex;not null" json:"email"`
+	Password     string         `json:"-"`
+	Name         string         `json:"name"`
+	OIDCSubject  string         `gorm:"uniqueIndex" json:"-"`     // OIDC sub claim
+	OIDCIssuer   string         `json:"-"`                        // OIDC issuer URL
+	AuthProvider string         `gorm:"default:'local'" json:"-"` // 'local' or 'oidc'
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	Diagrams     []Diagram      `gorm:"foreignKey:UserID" json:"diagrams,omitempty"`
 }
 
 type UserLoginRequest struct {

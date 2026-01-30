@@ -155,21 +155,16 @@
             this.baseUrl = CONFIG.apiBaseUrl;
         }
 
-        getToken() {
-            return localStorage.getItem(CONFIG.storageKeys.authToken);
-        }
-
         async request(endpoint, options = {}) {
-            const token = this.getToken();
             const headers = {
                 'Content-Type': 'application/json',
-                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
                 ...options.headers
             };
 
             const response = await fetch(`${this.baseUrl}${endpoint}`, {
                 ...options,
-                headers
+                headers,
+                credentials: 'include' // Important: send cookies with request
             });
 
             if (response.status === 401) {
@@ -347,12 +342,6 @@
 
     // Check authentication
     async function checkAuth() {
-        const token = api.getToken();
-        if (!token) {
-            state.isAuthenticated = false;
-            return;
-        }
-
         try {
             state.isAuthenticated = await api.checkAuth();
         } catch {
