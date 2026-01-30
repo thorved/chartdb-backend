@@ -33,8 +33,11 @@
           </button>
         </div>
 
-        <div v-if="status === 'success'" class="mt-6">
-          <button @click="goToDashboard" class="btn btn-primary w-full">
+        <div v-if="status === 'success'" class="mt-6 space-y-3">
+          <button @click="goToApplication" class="btn btn-primary w-full">
+            Open ChartDB
+          </button>
+          <button @click="goToDashboard" class="btn btn-secondary w-full">
             Go to Dashboard
           </button>
         </div>
@@ -81,7 +84,7 @@ export default {
           
           // Auto-redirect after 2 seconds
           setTimeout(() => {
-            router.push('/dashboard')
+            window.location.href = '/'
           }, 2000)
           return
         }
@@ -134,7 +137,7 @@ export default {
         
         // Auto-redirect after 2 seconds
         setTimeout(() => {
-          router.push('/dashboard')
+          window.location.href = '/'
         }, 2000)
       } catch (err) {
         console.error('[Sync] Failed to sync cloud data:', err)
@@ -149,7 +152,11 @@ export default {
     }
 
     const skipSync = () => {
-      router.push('/dashboard')
+      window.location.href = '/'
+    }
+
+    const goToApplication = () => {
+      window.location.href = '/'
     }
 
     const goToDashboard = () => {
@@ -167,7 +174,8 @@ export default {
       diagramCount,
       retrySync,
       skipSync,
-      goToDashboard
+      goToDashboard,
+      goToApplication
     }
   }
 }
