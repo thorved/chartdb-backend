@@ -40,7 +40,7 @@ COPY chartdb/ .
 RUN npx tsc -b && npx vite build
 
 # Inject sync toolbar script into the built index.html
-RUN sed -i 's|</body>|<script src="/static/sync-toolbar.js"></script></body>|' /app/chartdb/dist/index.html
+RUN sed -i 's|</body>|<script src="/static/auth-check.js"></script><script src="/static/sync-toolbar.js"></script></body>|' /app/chartdb/dist/index.html
 
 # Final image - single unified image
 FROM alpine:3.19
