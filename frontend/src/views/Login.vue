@@ -87,6 +87,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { chartDB } from '../chartdb-client'
 
 export default {
   name: 'Login',
@@ -117,6 +118,7 @@ export default {
         await api.login(email.value, password.value)
         
         // Redirect to sync page to pull cloud data
+        // Sync page will check if ChartDB database exists
         router.push('/sync')
       } catch (err) {
         error.value = err.message

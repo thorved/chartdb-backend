@@ -1,153 +1,41 @@
 /**
- * ChartDB Sync Toolbar
- * Integrated toolbar positioned in the top navbar
- * Syncs only the current diagram on IndexedDB changes
+ * ChartDB Sync Toolbar - Independent Implementation for SYNC operations
+ * 
+ * This file contains duplicated logic from ChartDB's export-import-utils.ts
+ * to ensure independence from ChartDB internals (which is a submodule/external dependency).
+ * 
+ * IMPORTANT DIFFERENCE FROM ChartDB EXPORT:
+ * - ChartDB's export creates NEW IDs for all entities (for file export/import)
+ * - This sync version PRESERVES the diagram ID to avoid duplicates during sync
+ * 
+ * Copied functions:
+ * - runningIdGenerator() -> createRunningIdGenerator()
+ * - cloneDiagram() -> cloneDiagramForExport() [MODIFIED: preserves diagram ID]
+ * - diagramToJSONOutput() -> diagramToJSON() [MODIFIED: preserves diagram ID]
+ * 
+ * Source: chartdb/src/lib/export-import-utils.ts
  */
 
 (function() {
     'use strict';
 
-    // Configuration
     const CONFIG = {
-        syncDashboardUrl: '/sync/',
         apiBaseUrl: '/sync/api',
-        debounceDelay: 2000, // Wait 2 seconds after last change before syncing
+        debounceDelay: 2000,
         storageKeys: {
-            authToken: 'chartdb_sync_token',
             autoSync: 'chartdb_sync_auto'
         }
     };
 
-    // State
     let state = {
         isAuthenticated: false,
-        autoSyncEnabled: true, // Default on
-        syncStatus: 'idle', // idle, syncing, synced, error
+        autoSyncEnabled: true,
+        syncStatus: 'idle',
         lastSyncTime: null,
         currentDiagramId: null,
         currentDiagramName: null,
         debounceTimer: null,
-        isInitialized: false
     };
-
-    // ChartDB IndexedDB Client - Read-only, waits for ChartDB to initialize
-    class ChartDBClient {
-        constructor() {
-            this.dbName = 'ChartDB';
-            this.db = null;
-        }
-
-        async openDB() {
-            // Don't specify version - just open whatever version exists
-            // This avoids conflicts with ChartDB's Dexie.js
-            return new Promise((resolve, reject) => {
-                const request = indexedDB.open(this.dbName);
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => {
-                    this.db = request.result;
-                    resolve(request.result);
-                };
-                // Don't handle onupgradeneeded - let ChartDB create the schema
-            });
-        }
-
-        async getAllFromStore(storeName) {
-            try {
-                const db = await this.openDB();
-                // Check if store exists before trying to access it
-                if (!db.objectStoreNames.contains(storeName)) {
-                    db.close();
-                    return [];
-                }
-                return new Promise((resolve, reject) => {
-                    try {
-                        const tx = db.transaction(storeName, 'readonly');
-                        const store = tx.objectStore(storeName);
-                        const request = store.getAll();
-                        request.onerror = () => {
-                            db.close();
-                            reject(request.error);
-                        };
-                        request.onsuccess = () => {
-                            db.close();
-                            resolve(request.result);
-                        };
-                    } catch (e) {
-                        db.close();
-                        resolve([]);
-                    }
-                });
-            } catch (e) {
-                return [];
-            }
-        }
-
-        async getConfig() {
-            try {
-                const configs = await this.getAllFromStore('config');
-                return configs[0] || null;
-            } catch {
-                return null;
-            }
-        }
-
-        async getDiagram(diagramId) {
-            const diagrams = await this.getAllFromStore('diagrams');
-            return diagrams.find(d => d.id === diagramId);
-        }
-
-        async getFullDiagram(diagramId) {
-            try {
-                const db = await this.openDB();
-                const stores = ['diagrams', 'db_tables', 'db_fields', 'db_indexes', 
-                               'db_relationships', 'db_dependencies', 'db_areas', 
-                               'diagram_notes', 'db_custom_types'];
-                
-                const data = {};
-                
-                for (const storeName of stores) {
-                    try {
-                        // Check if store exists
-                        if (!db.objectStoreNames.contains(storeName)) {
-                            if (storeName === 'diagrams') {
-                                data.diagram = null;
-                            } else {
-                                data[storeName] = [];
-                            }
-                            continue;
-                        }
-                        
-                        const tx = db.transaction(storeName, 'readonly');
-                        const store = tx.objectStore(storeName);
-                        const allItems = await new Promise((resolve, reject) => {
-                            const request = store.getAll();
-                            request.onerror = () => reject(request.error);
-                            request.onsuccess = () => resolve(request.result);
-                        });
-                        
-                        if (storeName === 'diagrams') {
-                            data.diagram = allItems.find(d => d.id === diagramId);
-                        } else {
-                            data[storeName] = allItems.filter(item => item.diagramId === diagramId);
-                        }
-                    } catch (e) {
-                        if (storeName === 'diagrams') {
-                            data.diagram = null;
-                        } else {
-                            data[storeName] = [];
-                        }
-                    }
-                }
-                
-                db.close();
-                return data;
-            } catch (e) {
-                return { diagram: null, db_tables: [], db_fields: [], db_indexes: [],
-                         db_relationships: [], db_dependencies: [], db_areas: [],
-                         diagram_notes: [], db_custom_types: [] };
-            }
-        }
-    }
 
     // API Client
     class SyncAPI {
@@ -156,69 +44,318 @@
         }
 
         async request(endpoint, options = {}) {
-            const headers = {
-                'Content-Type': 'application/json',
-                ...options.headers
-            };
-
             const response = await fetch(`${this.baseUrl}${endpoint}`, {
                 ...options,
-                headers,
-                credentials: 'include' // Important: send cookies with request
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                },
+                credentials: 'include'
             });
 
             if (response.status === 401) {
                 state.isAuthenticated = false;
-                updateToolbar();
                 throw new Error('Unauthorized');
             }
 
             return response;
         }
 
-        async checkAuth() {
-            try {
-                const response = await this.request('/auth/me');
-                return response.ok;
-            } catch {
-                return false;
-            }
-        }
-
-        async syncDiagram(diagramData) {
+        async syncDiagram(diagramJSON) {
+            console.log('[Sync Toolbar] API: Sending sync request...');
             const response = await this.request('/diagrams/sync', {
                 method: 'POST',
-                body: JSON.stringify(diagramData)
+                body: diagramJSON
             });
-            if (!response.ok) throw new Error('Failed to sync diagram');
+            console.log('[Sync Toolbar] API: Response status:', response.status);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[Sync Toolbar] API: Error response:', errorText);
+                // If unauthorized, show helpful message
+                if (response.status === 401) {
+                    throw new Error('Please login to sync dashboard first');
+                }
+                throw new Error('Failed to sync: ' + errorText);
+            }
             return response.json();
         }
     }
 
-    const chartDB = new ChartDBClient();
     const api = new SyncAPI();
 
-    // Get current diagram ID from URL or config
-    async function getCurrentDiagramId() {
-        // First try URL: /diagrams/:id
+    // Get current diagram ID from URL
+    function getCurrentDiagramId() {
         const match = window.location.pathname.match(/\/diagrams\/([^/]+)/);
-        if (match) {
-            return match[1];
+        return match ? match[1] : null;
+    }
+
+    // ============================================
+    // COPIED FROM ChartDB: export-import-utils.ts
+    // ============================================
+
+    /**
+     * Creates a running ID generator for diagram cloning
+     * Copied from: runningIdGenerator() in chartdb/src/lib/export-import-utils.ts
+     */
+    function createRunningIdGenerator() {
+        let id = 0;
+        return () => (id++).toString();
+    }
+
+    /**
+     * Clones a diagram with new IDs for export
+     * Copied from: cloneDiagram() in chartdb/src/lib/domain/clone.ts
+     * 
+     * NOTE: For SYNC operations, we preserve the original diagram ID
+     * to avoid creating duplicate diagrams. Only internal entity IDs are regenerated.
+     */
+    function cloneDiagramForExport(diagram) {
+        const generateId = createRunningIdGenerator();
+        const idMap = new Map();
+
+        // For SYNC: Preserve the original diagram ID (don't generate new one)
+        // This prevents creating duplicate diagrams in IndexedDB
+        const clonedDiagram = {
+            ...diagram,
+            id: diagram.id, // PRESERVE original ChartDB ID
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+
+        idMap.set(diagram.id, clonedDiagram.id);
+
+        // Clone tables with new IDs
+        if (diagram.tables) {
+            clonedDiagram.tables = diagram.tables.map(table => {
+                const newTableId = generateId();
+                idMap.set(table.id, newTableId);
+
+                const clonedTable = {
+                    ...table,
+                    id: newTableId,
+                    createdAt: table.createdAt || Date.now(),
+                };
+
+                // Clone fields with new IDs
+                if (table.fields) {
+                    clonedTable.fields = table.fields.map(field => {
+                        const newFieldId = generateId();
+                        idMap.set(field.id, newFieldId);
+                        return {
+                            ...field,
+                            id: newFieldId,
+                            createdAt: field.createdAt || Date.now(),
+                        };
+                    });
+                }
+
+                // Update index field references
+                if (table.indexes) {
+                    clonedTable.indexes = table.indexes.map(index => ({
+                        ...index,
+                        id: generateId(),
+                        fieldIds: index.fieldIds?.map(oldId => idMap.get(oldId) || oldId) || [],
+                        createdAt: index.createdAt || Date.now(),
+                    }));
+                }
+
+                return clonedTable;
+            });
         }
+
+        // Clone relationships with updated references
+        if (diagram.relationships) {
+            clonedDiagram.relationships = diagram.relationships.map(rel => ({
+                ...rel,
+                id: generateId(),
+                sourceTableId: idMap.get(rel.sourceTableId) || rel.sourceTableId,
+                targetTableId: idMap.get(rel.targetTableId) || rel.targetTableId,
+                sourceFieldId: idMap.get(rel.sourceFieldId) || rel.sourceFieldId,
+                targetFieldId: idMap.get(rel.targetFieldId) || rel.targetFieldId,
+                createdAt: rel.createdAt || Date.now(),
+            }));
+        }
+
+        // Clone dependencies with updated references
+        if (diagram.dependencies) {
+            clonedDiagram.dependencies = diagram.dependencies.map(dep => ({
+                ...dep,
+                id: generateId(),
+                tableId: idMap.get(dep.tableId) || dep.tableId,
+                dependentTableId: idMap.get(dep.dependentTableId) || dep.dependentTableId,
+                createdAt: dep.createdAt || Date.now(),
+            }));
+        }
+
+        // Clone areas, notes, custom types
+        if (diagram.areas) {
+            clonedDiagram.areas = diagram.areas.map(area => ({
+                ...area,
+                id: generateId(),
+            }));
+        }
+
+        if (diagram.notes) {
+            clonedDiagram.notes = diagram.notes.map(note => ({
+                ...note,
+                id: generateId(),
+            }));
+        }
+
+        if (diagram.customTypes) {
+            clonedDiagram.customTypes = diagram.customTypes.map(ct => ({
+                ...ct,
+                id: generateId(),
+            }));
+        }
+
+        return clonedDiagram;
+    }
+
+    /**
+     * Converts diagram to JSON string for export/sync
+     * Copied from: diagramToJSONOutput() in chartdb/src/lib/export-import-utils.ts
+     * 
+     * IMPORTANT: Preserves the original diagram ID to prevent duplicates
+     * during sync operations. Only internal entity IDs are regenerated.
+     */
+    function diagramToJSON(diagram) {
+        const clonedDiagram = cloneDiagramForExport(diagram);
+        return JSON.stringify(clonedDiagram, null, 2);
+    }
+
+    /**
+     * Get diagram data in ChartDB JSON export format
+     * Uses the duplicated ChartDB export logic above
+     */
+    async function getCurrentDiagramData() {
+        const diagramId = getCurrentDiagramId();
+        console.log('[Sync Toolbar] Getting diagram data for ID:', diagramId);
         
-        // Fallback to config's defaultDiagramId
-        const config = await chartDB.getConfig();
-        return config?.defaultDiagramId || null;
+        if (!diagramId) {
+            console.log('[Sync Toolbar] No diagram ID in URL');
+            return null;
+        }
+
+        try {
+            console.log('[Sync Toolbar] Fetching from IndexedDB...');
+            const diagram = await getDiagramFromIndexedDB(diagramId);
+            
+            if (!diagram) {
+                console.log('[Sync Toolbar] Diagram not found in IndexedDB');
+                return null;
+            }
+
+            console.log('[Sync Toolbar] Diagram found:', diagram.name, 'Tables:', diagram.tables?.length);
+            
+            // Use copied ChartDB export logic
+            const json = diagramToJSON(diagram);
+            console.log('[Sync Toolbar] Converted to JSON, length:', json.length);
+            return json;
+        } catch (e) {
+            console.error('[Sync Toolbar] Failed to get diagram:', e);
+            return null;
+        }
+    }
+
+    // Get diagram directly from IndexedDB (read-only, doesn't create)
+    async function getDiagramFromIndexedDB(diagramId) {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('ChartDB');
+            
+            request.onerror = () => {
+                // Database doesn't exist - ChartDB hasn't been opened yet
+                resolve(null);
+            };
+            
+            request.onsuccess = () => {
+                const db = request.result;
+                
+                // Check if required stores exist
+                if (!db.objectStoreNames.contains('diagrams')) {
+                    console.warn('[Sync Toolbar] Database exists but diagrams store not found');
+                    db.close();
+                    resolve(null);
+                    return;
+                }
+                
+                try {
+                    // Get diagram metadata
+                    const tx = db.transaction(['diagrams'], 'readonly');
+                    const store = tx.objectStore('diagrams');
+                    const diagramReq = store.get(diagramId);
+                    
+                    diagramReq.onsuccess = async () => {
+                        const diagram = diagramReq.result;
+                        if (!diagram) {
+                            db.close();
+                            resolve(null);
+                            return;
+                        }
+
+                        // Get all related data
+                        const stores = ['db_tables', 'db_relationships', 'db_dependencies', 
+                                       'areas', 'notes', 'db_custom_types'];
+                        const data = { ...diagram };
+
+                        for (const storeName of stores) {
+                            if (!db.objectStoreNames.contains(storeName)) continue;
+                            
+                            try {
+                                const tx2 = db.transaction(storeName, 'readonly');
+                                const store2 = tx2.objectStore(storeName);
+                                
+                                // Try to use index
+                                if (store2.indexNames.contains('diagramId')) {
+                                    const idx = store2.index('diagramId');
+                                    const items = await new Promise((res, rej) => {
+                                        const req = idx.getAll(diagramId);
+                                        req.onsuccess = () => res(req.result);
+                                        req.onerror = () => rej(req.error);
+                                    });
+                                    
+                                    // Map store name to data property
+                                    const propName = storeName === 'db_tables' ? 'tables' :
+                                                   storeName === 'db_relationships' ? 'relationships' :
+                                                   storeName === 'db_dependencies' ? 'dependencies' :
+                                                   storeName === 'areas' ? 'areas' :
+                                                   storeName === 'notes' ? 'notes' :
+                                                   storeName === 'db_custom_types' ? 'customTypes' : storeName;
+                                    data[propName] = items;
+                                }
+                            } catch (e) {
+                                console.warn(`Failed to get ${storeName}:`, e);
+                            }
+                        }
+                        
+                        db.close();
+                        resolve(data);
+                    };
+                    
+                    diagramReq.onerror = () => {
+                        db.close();
+                        reject(diagramReq.error);
+                    };
+                } catch (e) {
+                    db.close();
+                    reject(e);
+                }
+            };
+        });
     }
 
     // Update current diagram info
     async function updateCurrentDiagramInfo() {
-        const diagramId = await getCurrentDiagramId();
+        const diagramId = getCurrentDiagramId();
         state.currentDiagramId = diagramId;
         
         if (diagramId) {
-            const diagram = await chartDB.getDiagram(diagramId);
-            state.currentDiagramName = diagram?.name || 'Untitled';
+            try {
+                const diagram = await getDiagramFromIndexedDB(diagramId);
+                state.currentDiagramName = diagram?.name || 'Untitled';
+            } catch {
+                state.currentDiagramName = 'Untitled';
+            }
         } else {
             state.currentDiagramName = null;
         }
@@ -226,7 +363,24 @@
 
     // Sync current diagram
     async function syncCurrentDiagram() {
-        if (!state.isAuthenticated || !state.currentDiagramId || state.syncStatus === 'syncing') {
+        console.log('[Sync Toolbar] Attempting sync...', {
+            isAuthenticated: state.isAuthenticated,
+            currentDiagramId: state.currentDiagramId,
+            syncStatus: state.syncStatus
+        });
+
+        if (!state.isAuthenticated) {
+            console.log('[Sync Toolbar] Not authenticated, skipping sync');
+            return;
+        }
+        
+        if (!state.currentDiagramId) {
+            console.log('[Sync Toolbar] No diagram ID, skipping sync');
+            return;
+        }
+        
+        if (state.syncStatus === 'syncing') {
+            console.log('[Sync Toolbar] Already syncing, skipping');
             return;
         }
 
@@ -234,26 +388,19 @@
         updateToolbar();
 
         try {
-            const fullDiagram = await chartDB.getFullDiagram(state.currentDiagramId);
+            console.log('[Sync Toolbar] Getting diagram data...');
+            const diagramJSON = await getCurrentDiagramData();
             
-            if (!fullDiagram.diagram) {
+            if (!diagramJSON) {
+                console.log('[Sync Toolbar] No diagram data found');
                 state.syncStatus = 'idle';
                 updateToolbar();
                 return;
             }
 
-            await api.syncDiagram({
-                id: fullDiagram.diagram.id,
-                name: fullDiagram.diagram.name,
-                databaseType: fullDiagram.diagram.databaseType,
-                databaseEdition: fullDiagram.diagram.databaseEdition,
-                tables: fullDiagram.db_tables || [],
-                relationships: fullDiagram.db_relationships || [],
-                dependencies: fullDiagram.db_dependencies || [],
-                areas: fullDiagram.db_areas || [],
-                notes: fullDiagram.diagram_notes || [],
-                customTypes: fullDiagram.db_custom_types || []
-            });
+            console.log('[Sync Toolbar] Sending to server...');
+            const result = await api.syncDiagram(diagramJSON);
+            console.log('[Sync Toolbar] Sync successful:', result);
 
             state.syncStatus = 'synced';
             state.lastSyncTime = new Date();
@@ -267,7 +414,7 @@
             }, 3000);
 
         } catch (error) {
-            console.error('Sync failed:', error);
+            console.error('[Sync Toolbar] Sync failed:', error);
             state.syncStatus = 'error';
             
             // Reset to idle after 5 seconds
@@ -282,9 +429,9 @@
         updateToolbar();
     }
 
-    // Debounced sync - waits for changes to stop before syncing
+    // Debounced sync
     function debouncedSync() {
-        if (!state.autoSyncEnabled || !state.isAuthenticated) return;
+        if (!state.autoSyncEnabled) return;
         
         if (state.debounceTimer) {
             clearTimeout(state.debounceTimer);
@@ -298,30 +445,26 @@
         }, CONFIG.debounceDelay);
     }
 
-    // Monitor IndexedDB for changes - non-invasive approach
+    // Monitor IndexedDB for changes
     function setupChangeMonitor() {
-        // Use a MutationObserver-like polling approach instead of intercepting IndexedDB
-        // This avoids breaking Dexie.js and other IndexedDB libraries
-        
-        let lastUpdatedAt = null;
+        let lastHash = null;
         
         async function checkForChanges() {
-            if (!state.autoSyncEnabled || !state.isAuthenticated || !state.currentDiagramId) {
+            if (!state.autoSyncEnabled || !state.currentDiagramId) {
                 return;
             }
             
             try {
-                const diagram = await chartDB.getDiagram(state.currentDiagramId);
+                const diagram = await getDiagramFromIndexedDB(state.currentDiagramId);
                 if (diagram && diagram.updatedAt) {
                     const updatedAt = new Date(diagram.updatedAt).getTime();
-                    if (lastUpdatedAt !== null && updatedAt > lastUpdatedAt) {
-                        // Diagram was updated, trigger sync
+                    if (lastHash !== null && updatedAt > lastHash) {
                         debouncedSync();
                     }
-                    lastUpdatedAt = updatedAt;
+                    lastHash = updatedAt;
                 }
             } catch (e) {
-                // Ignore errors, database might not be ready
+                // Ignore errors
             }
         }
         
@@ -340,14 +483,6 @@
         localStorage.setItem(CONFIG.storageKeys.autoSync, state.autoSyncEnabled);
     }
 
-    // Check authentication
-    async function checkAuth() {
-        try {
-            state.isAuthenticated = await api.checkAuth();
-        } catch {
-            state.isAuthenticated = false;
-        }
-    }
 
     // Toggle auto-sync
     function toggleAutoSync() {
@@ -356,7 +491,6 @@
         updateToolbar();
         
         if (state.autoSyncEnabled) {
-            // Sync immediately when enabled
             debouncedSync();
         }
     }
@@ -366,7 +500,6 @@
         const toolbar = document.createElement('div');
         toolbar.id = 'chartdb-sync-toolbar';
         toolbar.className = 'chartdb-sync-toolbar';
-        
         return toolbar;
     }
 
@@ -391,44 +524,33 @@
             error: 'Sync Error'
         };
 
-        if (!state.isAuthenticated) {
-            toolbar.innerHTML = `
-                <a href="${CONFIG.syncDashboardUrl}login" class="sync-login-link" target="_blank" title="Sign in to sync">
-                    <svg class="sync-icon" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                    </svg>
-                    <span>Sign in to sync</span>
-                </a>
-            `;
-        } else {
-            const diagramInfo = state.currentDiagramName 
-                ? `<span class="sync-diagram-name" title="${state.currentDiagramName}">${state.currentDiagramName}</span>` 
-                : '';
-            
-            const lastSyncInfo = state.lastSyncTime 
-                ? `<span class="sync-last-time" title="Last synced: ${state.lastSyncTime.toLocaleTimeString()}">· ${formatTimeAgo(state.lastSyncTime)}</span>` 
-                : '';
+        const diagramInfo = state.currentDiagramName 
+            ? `<span class="sync-diagram-name" title="${state.currentDiagramName}">${state.currentDiagramName}</span>` 
+            : '';
+        
+        const lastSyncInfo = state.lastSyncTime 
+            ? `<span class="sync-last-time" title="Last synced: ${state.lastSyncTime.toLocaleTimeString()}">· ${formatTimeAgo(state.lastSyncTime)}</span>` 
+            : '';
 
-            toolbar.innerHTML = `
-                <div class="sync-container">
-                    <button class="sync-toggle-btn ${state.autoSyncEnabled ? 'enabled' : 'disabled'}" 
-                            onclick="window.__chartdbSync.toggleAutoSync()" 
-                            title="${state.autoSyncEnabled ? 'Auto-sync ON (click to disable)' : 'Auto-sync OFF (click to enable)'}">
-                        <span class="sync-status-indicator ${state.syncStatus}"></span>
-                        ${statusIcons[state.syncStatus]}
-                        <span class="sync-status-text">${statusText[state.syncStatus]}</span>
-                    </button>
-                    ${diagramInfo}
-                    ${lastSyncInfo}
-                    <button class="sync-manual-btn" onclick="window.__chartdbSync.syncNow()" title="Sync now">
-                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
-                    </button>
-                    <a href="${CONFIG.syncDashboardUrl}dashboard" class="sync-dashboard-btn" target="_blank" title="Open Sync Dashboard">
-                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-                    </a>
-                </div>
-            `;
-        }
+        toolbar.innerHTML = `
+            <div class="sync-container">
+                <button class="sync-toggle-btn ${state.autoSyncEnabled ? 'enabled' : 'disabled'}" 
+                        onclick="window.__chartdbSync.toggleAutoSync()" 
+                        title="${state.autoSyncEnabled ? 'Auto-sync ON (click to disable)' : 'Auto-sync OFF (click to enable)'}">
+                    <span class="sync-status-indicator ${state.syncStatus}"></span>
+                    ${statusIcons[state.syncStatus]}
+                    <span class="sync-status-text">${statusText[state.syncStatus]}</span>
+                </button>
+                ${diagramInfo}
+                ${lastSyncInfo}
+                <button class="sync-manual-btn" onclick="window.__chartdbSync.syncNow()" title="Sync now">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                </button>
+                <a href="/sync/dashboard" class="sync-dashboard-btn" target="_blank" title="Open Sync Dashboard">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                </a>
+            </div>
+        `;
     }
 
     // Format time ago
@@ -442,36 +564,30 @@
 
     // Find navbar and inject toolbar
     function injectToolbar() {
-        // Wait for ChartDB's navbar to load
         const checkNavbar = setInterval(() => {
-            // Look for the top navbar - it has the "Last saved" text
             const navbar = document.querySelector('nav.flex');
             
             if (navbar) {
                 clearInterval(checkNavbar);
-                
-                // Find where to insert - look for the right side of navbar
                 const toolbar = createToolbar();
-                
-                // Insert before the last child or at the end
                 const lastChild = navbar.lastElementChild;
                 if (lastChild) {
                     navbar.insertBefore(toolbar, lastChild);
                 } else {
                     navbar.appendChild(toolbar);
                 }
-                
                 updateToolbar();
                 console.log('ChartDB Sync Toolbar injected into navbar');
             }
         }, 500);
 
-        // Stop trying after 30 seconds
         setTimeout(() => clearInterval(checkNavbar), 30000);
     }
 
     // Initialize
     async function init() {
+        console.log('[Sync Toolbar] Initializing...');
+        
         // Load CSS
         const link = document.createElement('link');
         link.rel = 'stylesheet';
@@ -480,26 +596,29 @@
 
         // Load preferences
         loadPreferences();
+        console.log('[Sync Toolbar] Auto-sync enabled:', state.autoSyncEnabled);
 
-        // Check auth
-        await checkAuth();
+        // Auth check removed - sync will show error if not logged in
+        state.isAuthenticated = true;
+        console.log('[Sync Toolbar] Auth check skipped - will show error on sync if needed');
 
         // Get current diagram info
         await updateCurrentDiagramInfo();
+        console.log('[Sync Toolbar] Current diagram ID:', state.currentDiagramId);
 
-        // Inject toolbar into navbar
+        // Inject toolbar
         injectToolbar();
 
-        // Setup change monitor for IndexedDB
+        // Setup change monitor
         setupChangeMonitor();
 
-        // Expose global functions for onclick handlers
+        // Expose global functions
         window.__chartdbSync = {
             toggleAutoSync: toggleAutoSync,
             syncNow: syncCurrentDiagram
         };
 
-        // Monitor URL changes for diagram switches
+        // Monitor URL changes
         let lastUrl = window.location.href;
         const urlObserver = new MutationObserver(async () => {
             if (window.location.href !== lastUrl) {
@@ -510,19 +629,16 @@
         });
         urlObserver.observe(document.body, { childList: true, subtree: true });
 
-        // Also check with popstate
         window.addEventListener('popstate', async () => {
             await updateCurrentDiagramInfo();
             updateToolbar();
         });
 
-        state.isInitialized = true;
-        console.log('ChartDB Sync Toolbar initialized');
+        console.log('[Sync Toolbar] Initialization complete');
     }
 
-    // Wait for DOM and delay to let ChartDB initialize its database first
+    // Delayed init
     function delayedInit() {
-        // Wait 2 seconds for ChartDB to initialize its IndexedDB
         setTimeout(init, 2000);
     }
 

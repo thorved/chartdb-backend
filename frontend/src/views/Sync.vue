@@ -65,8 +65,30 @@ export default {
       try {
         status.value = 'syncing'
         title.value = 'Syncing Data...'
-        message.value = 'Fetching your diagrams from the cloud...'
+        message.value = 'Checking database...'
         console.log('[Sync] Starting cloud data sync...')
+        
+        // Check if ChartDB database exists with proper schema
+        console.log('[Sync] Checking ChartDB database...')
+        try {
+          const dbReady = await chartDB.checkDatabase()
+          if (!dbReady) {
+            console.log('[Sync] ChartDB database not found or empty')
+            status.value = 'error'
+            title.value = 'ChartDB Not Initialized'
+            message.value = 'Please open the ChartDB application first and create a diagram to initialize the database, then return here to sync.'
+            return
+          }
+          console.log('[Sync] ChartDB database is ready')
+        } catch (dbErr) {
+          console.error('[Sync] Database check failed:', dbErr)
+          status.value = 'error'
+          title.value = 'Database Error'
+          message.value = 'Failed to access ChartDB database. Please open ChartDB application first.'
+          return
+        }
+        
+        message.value = 'Fetching your diagrams from the cloud...'
         
         // Get all diagrams from cloud
         const response = await api.pullAllDiagrams()
@@ -93,36 +115,41 @@ export default {
         
         // Clear local IndexedDB first
         console.log('[Sync] Clearing local IndexedDB...')
-        await chartDB.clearAllDiagrams()
-        console.log('[Sync] Local IndexedDB cleared successfully')
+        try {
+          await chartDB.clearAllDiagrams()
+          console.log('[Sync] Local IndexedDB cleared successfully')
+        } catch (clearErr) {
+          console.warn('[Sync] Error clearing (may be empty):', clearErr)
+        }
         
-        // Reopen database after clearing
-        console.log('[Sync] Reopening database...')
-        await chartDB.reopen()
-        console.log('[Sync] Database reopened successfully')
+        // Ensure database is still open after clearing
+        console.log('[Sync] Ensuring database connection...')
+        try {
+          await chartDB.ensureOpen()
+          console.log('[Sync] Database connection ready')
+        } catch (openErr) {
+          console.error('[Sync] Failed to ensure database connection:', openErr)
+          throw openErr
+        }
         
-        // Save each cloud diagram to local IndexedDB
+        // Save each cloud diagram to local IndexedDB using JSON format
         for (let i = 0; i < cloudDiagrams.length; i++) {
           const diagram = cloudDiagrams[i]
           message.value = `Syncing diagram ${i + 1} of ${cloudDiagrams.length}: ${diagram.name || 'Untitled'}...`
           console.log(`[Sync] Saving diagram ${i + 1}:`, diagram.id, diagram.name)
+          console.log(`[Sync] Diagram data:`, {
+            id: diagram.id,
+            name: diagram.name,
+            databaseType: diagram.databaseType,
+            tablesCount: diagram.tables?.length || 0,
+            relationshipsCount: diagram.relationships?.length || 0,
+            hasTables: !!diagram.tables,
+            hasRelationships: !!diagram.relationships
+          })
           
           try {
-            // Ensure all required fields are present with correct types
-            const diagramData = {
-              id: diagram.id,
-              name: diagram.name || 'Untitled',
-              databaseType: diagram.databaseType || 'generic',
-              databaseEdition: diagram.databaseEdition,
-              tables: Array.isArray(diagram.tables) ? diagram.tables : [],
-              relationships: Array.isArray(diagram.relationships) ? diagram.relationships : [],
-              dependencies: Array.isArray(diagram.dependencies) ? diagram.dependencies : [],
-              areas: Array.isArray(diagram.areas) ? diagram.areas : [],
-              notes: Array.isArray(diagram.notes) ? diagram.notes : [],
-              customTypes: Array.isArray(diagram.customTypes) ? diagram.customTypes : []
-            }
-            
-            await chartDB.saveDiagramFull(diagramData)
+            // Use the new JSON-based save method
+            await chartDB.saveDiagramJSON(diagram)
             console.log(`[Sync] Successfully saved diagram ${i + 1}`)
           } catch (saveErr) {
             console.error(`[Sync] Failed to save diagram ${i + 1}:`, saveErr)

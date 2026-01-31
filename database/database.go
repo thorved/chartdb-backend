@@ -26,23 +26,17 @@ func InitDB() {
 		log.Fatal("Failed to connect to database:", err)
 	}
 
-	// Auto-migrate all models
+	// Auto-migrate only the essential models
+	// Diagram data is now stored as JSON in DiagramVersion.Data
+	// Old entity tables (DBTable, DBField, etc.) are no longer used
 	err = DB.AutoMigrate(
 		&models.User{},
 		&models.Diagram{},
 		&models.DiagramVersion{},
-		&models.DBTable{},
-		&models.DBField{},
-		&models.DBIndex{},
-		&models.DBRelationship{},
-		&models.DBDependency{},
-		&models.Area{},
-		&models.Note{},
-		&models.DBCustomType{},
 	)
 	if err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
-	log.Println("Database initialized successfully")
+	log.Println("Database initialized successfully (JSON-only mode)")
 }

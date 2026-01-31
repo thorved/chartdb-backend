@@ -361,9 +361,9 @@ export default {
       try {
         // Sync all local diagrams to server (without creating new versions)
         for (const diagram of localDiagrams.value) {
-          const fullDiagram = await chartDB.getDiagramFull(diagram.id)
+          const diagramJSON = await chartDB.getDiagramJSON(diagram.id)
           // Use syncDiagram instead of pushDiagram for auto-sync
-          await api.syncDiagram(fullDiagram)
+          await api.syncDiagram(diagramJSON)
         }
 
         // Reload synced diagrams
@@ -506,11 +506,11 @@ export default {
       try {
         pushing.value = diagram.id
         
-        // Get full diagram data from IndexedDB
-        const fullDiagram = await chartDB.getDiagramFull(diagram.id)
+        // Get diagram data in JSON format from IndexedDB
+        const diagramJSON = await chartDB.getDiagramJSON(diagram.id)
         
         // Push to server
-        await api.pushDiagram(fullDiagram)
+        await api.pushDiagram(diagramJSON)
         
         // Reload synced diagrams
         await loadSyncedDiagrams()
@@ -533,8 +533,8 @@ export default {
         // Make sure database is open (will create if deleted)
         await chartDB.reopen()
         
-        // Save to IndexedDB
-        await chartDB.saveDiagramFull(diagramData)
+        // Save to IndexedDB using JSON format
+        await chartDB.saveDiagramJSON(diagramData)
         
         // Reload local diagrams
         dbAvailable.value = true
@@ -559,8 +559,8 @@ export default {
         // Make sure database is open (will create if deleted)
         await chartDB.reopen()
         
-        // Save to IndexedDB
-        await chartDB.saveDiagramFull(diagramData)
+        // Save to IndexedDB using JSON format
+        await chartDB.saveDiagramJSON(diagramData)
         
         // Reload local diagrams
         dbAvailable.value = true
@@ -618,7 +618,7 @@ export default {
         
         // Also delete from local IndexedDB
         try {
-          await chartDB.deleteDiagramFull(diagramId)
+          await chartDB.deleteDiagram(diagramId)
           console.log('Deleted from local IndexedDB:', diagramId)
         } catch (localErr) {
           console.warn('Could not delete from local IndexedDB:', localErr)
@@ -648,14 +648,31 @@ export default {
       }
     }
 
-    onMounted(() => {
+    onMounted(async () => {
       loadAutoSyncPreferences()
-      loadAll().then(() => {
-        // Start auto-sync if it was enabled
-        if (autoSyncEnabled.value) {
-          startAutoSync()
+      
+      // Check if ChartDB database exists with proper schema
+      console.log('[Dashboard] Checking ChartDB database...')
+      try {
+        const dbReady = await chartDB.checkDatabase()
+        if (dbReady) {
+          console.log('[Dashboard] ChartDB database is ready')
+          dbAvailable.value = true
+        } else {
+          console.log('[Dashboard] ChartDB database not found or empty')
+          dbAvailable.value = false
         }
-      })
+      } catch (err) {
+        console.log('[Dashboard] ChartDB not available:', err.message)
+        dbAvailable.value = false
+      }
+      
+      await loadAll()
+      
+      // Start auto-sync if it was enabled
+      if (autoSyncEnabled.value && dbAvailable.value) {
+        startAutoSync()
+      }
     })
 
     onUnmounted(() => {
