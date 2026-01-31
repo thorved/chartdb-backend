@@ -51,6 +51,13 @@ func Signup(c *gin.Context) {
 		return
 	}
 
+	// Store token for single-session enforcement
+	user.CurrentToken = token
+	if err := database.DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update session"})
+		return
+	}
+
 	// Set auth cookie
 	SetAuthCookie(c, token)
 
@@ -92,6 +99,13 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// Store token for single-session enforcement
+	user.CurrentToken = token
+	if err := database.DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update session"})
+		return
+	}
+
 	// Set auth cookie
 	SetAuthCookie(c, token)
 
@@ -107,6 +121,12 @@ func Login(c *gin.Context) {
 
 // Logout handles user logout
 func Logout(c *gin.Context) {
+	// Clear the current session token to invalidate other sessions
+	userID := middleware.GetUserID(c)
+	if userID > 0 {
+		database.DB.Model(&models.User{}).Where("id = ?", userID).Update("current_token", "")
+	}
+
 	ClearAuthCookie(c)
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }

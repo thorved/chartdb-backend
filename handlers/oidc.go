@@ -150,6 +150,13 @@ func OIDCCallback(c *gin.Context) {
 		return
 	}
 
+	// Store token for single-session enforcement
+	user.CurrentToken = token
+	if err := database.DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update session"})
+		return
+	}
+
 	// Set auth cookie
 	SetAuthCookie(c, token)
 

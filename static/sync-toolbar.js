@@ -361,6 +361,32 @@
         }
     }
 
+    // Check authentication on page load via API
+    async function checkAuth() {
+        try {
+            const response = await fetch('/sync/api/auth/me', {
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            
+            if (!response.ok) {
+                // User is not authenticated
+                state.isAuthenticated = false;
+                console.log('[Sync Toolbar] User not authenticated');
+                return false;
+            }
+            state.isAuthenticated = true;
+            console.log('[Sync Toolbar] User authenticated');
+            return true;
+        } catch (err) {
+            state.isAuthenticated = false;
+            console.error('[Sync Toolbar] Auth check failed:', err);
+            return false;
+        }
+    }
+
     // Sync current diagram
     async function syncCurrentDiagram() {
         console.log('[Sync Toolbar] Attempting sync...', {
@@ -369,8 +395,16 @@
             syncStatus: state.syncStatus
         });
 
-        if (!state.isAuthenticated) {
+        // Check auth before syncing
+        if (!await checkAuth()) {
             console.log('[Sync Toolbar] Not authenticated, skipping sync');
+            state.syncStatus = 'error';
+            updateToolbar();
+            
+            // Redirect to login after 2 seconds
+            setTimeout(() => {
+                window.location.href = '/sync/login';
+            }, 2000);
             return;
         }
         
@@ -598,9 +632,9 @@
         loadPreferences();
         console.log('[Sync Toolbar] Auto-sync enabled:', state.autoSyncEnabled);
 
-        // Auth check removed - sync will show error if not logged in
-        state.isAuthenticated = true;
-        console.log('[Sync Toolbar] Auth check skipped - will show error on sync if needed');
+        // Check authentication
+        await checkAuth();
+        console.log('[Sync Toolbar] Auth status:', state.isAuthenticated);
 
         // Get current diagram info
         await updateCurrentDiagramInfo();

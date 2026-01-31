@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/thorved/chartdb-backend/database"
+	"github.com/thorved/chartdb-backend/models"
 )
 
 var jwtSecret []byte
@@ -95,6 +97,21 @@ func AuthMiddleware() gin.HandlerFunc {
 		claims, err := ValidateToken(tokenString)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			c.Abort()
+			return
+		}
+
+		// Check if this is the current active session (single-session enforcement)
+		var user models.User
+		if err := database.DB.First(&user, claims.UserID).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+			c.Abort()
+			return
+		}
+
+		// Check if token matches the current active session
+		if user.CurrentToken != tokenString {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Session expired. Please login again."})
 			c.Abort()
 			return
 		}

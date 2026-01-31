@@ -53,8 +53,8 @@ func main() {
 	// Setup routes (includes auth enforcement for /sync routes)
 	routes.SetupRoutes(r)
 
-	// Root path - serves ChartDB with auth check script injection
-	// Auth is checked client-side by auth-check.js
+	// Root path - serves ChartDB
+	// Auth is checked client-side by sync-toolbar.js
 	r.GET("/", serveChartDBWithAuth)
 
 	// Get port from environment or default to 8080

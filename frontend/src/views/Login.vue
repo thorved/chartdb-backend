@@ -117,9 +117,9 @@ export default {
       try {
         await api.login(email.value, password.value)
         
-        // Redirect to sync page to pull cloud data
-        // Sync page will check if ChartDB database exists
-        router.push('/sync')
+        // Redirect to dashboard instead of sync
+        // Dashboard will guide user through the sync process
+        router.push('/dashboard')
       } catch (err) {
         error.value = err.message
         loading.value = false

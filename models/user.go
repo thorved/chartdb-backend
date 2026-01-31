@@ -14,6 +14,7 @@ type User struct {
 	OIDCSubject  string         `gorm:"uniqueIndex" json:"-"`     // OIDC sub claim
 	OIDCIssuer   string         `json:"-"`                        // OIDC issuer URL
 	AuthProvider string         `gorm:"default:'local'" json:"-"` // 'local' or 'oidc'
+	CurrentToken string         `json:"-"`                        // Current active session token
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`

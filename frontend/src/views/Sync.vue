@@ -17,6 +17,7 @@
           </div>
           
           <h1 class="text-2xl font-bold text-gray-900">{{ title }}</h1>
+          
           <p class="mt-2 text-gray-600">{{ message }}</p>
           
           <div v-if="diagramCount > 0" class="mt-4 text-sm text-gray-500">
@@ -24,12 +25,15 @@
           </div>
         </div>
 
-        <div v-if="status === 'error'" class="mt-6">
-          <button @click="retrySync" class="btn btn-primary w-full">
-            Retry Sync
+        <div v-if="status === 'error'" class="mt-6 space-y-3">
+          <button v-if="dbNotInitialized" @click="openChartDBAndWait" class="btn btn-primary w-full">
+            Open ChartDB & Initialize
           </button>
-          <button @click="skipSync" class="btn btn-secondary w-full mt-3">
-            Skip & Continue
+          <button @click="retrySync" class="btn btn-secondary w-full">
+            {{ dbNotInitialized ? 'Check Again' : 'Retry Sync' }}
+          </button>
+          <button @click="goToDashboard" class="btn btn-outline w-full">
+            Go to Dashboard
           </button>
         </div>
 
@@ -52,7 +56,7 @@ import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { chartDB } from '../chartdb-client'
 
-export default {
+  export default {
   name: 'Sync',
   setup() {
     const router = useRouter()
@@ -60,6 +64,7 @@ export default {
     const title = ref('Syncing Data...')
     const message = ref('Fetching your diagrams from the cloud...')
     const diagramCount = ref(0)
+    const dbNotInitialized = ref(false)
 
     const syncCloudData = async () => {
       try {
@@ -70,22 +75,23 @@ export default {
         
         // Check if ChartDB database exists with proper schema
         console.log('[Sync] Checking ChartDB database...')
+        let dbReady = false
         try {
-          const dbReady = await chartDB.checkDatabase()
-          if (!dbReady) {
-            console.log('[Sync] ChartDB database not found or empty')
-            status.value = 'error'
-            title.value = 'ChartDB Not Initialized'
-            message.value = 'Please open the ChartDB application first and create a diagram to initialize the database, then return here to sync.'
-            return
-          }
-          console.log('[Sync] ChartDB database is ready')
+          dbReady = await chartDB.checkDatabase()
         } catch (dbErr) {
           console.error('[Sync] Database check failed:', dbErr)
+        }
+        
+        if (!dbReady) {
+          console.log('[Sync] ChartDB database not found')
           status.value = 'error'
-          title.value = 'Database Error'
-          message.value = 'Failed to access ChartDB database. Please open ChartDB application first.'
+          title.value = 'ChartDB Not Initialized'
+          message.value = 'ChartDB database not found. Please open ChartDB first.'
+          dbNotInitialized.value = true
           return
+        } else {
+          console.log('[Sync] ChartDB database is ready')
+          dbNotInitialized.value = false
         }
         
         message.value = 'Fetching your diagrams from the cloud...'
@@ -190,6 +196,56 @@ export default {
       router.push('/dashboard')
     }
 
+    const openChartDBAndWait = async () => {
+      // Open ChartDB in a popup (this works because it's triggered by user click)
+      const chartdbWindow = window.open('/', 'chartdb-init', 'width=1200,height=800')
+      
+      if (!chartdbWindow || chartdbWindow.closed || typeof chartdbWindow.closed === 'undefined') {
+        // Popup was blocked, fallback to redirect
+        window.location.href = '/?returnTo=sync'
+        return
+      }
+      
+      status.value = 'syncing'
+      title.value = 'Waiting for ChartDB...'
+      message.value = 'Please wait while ChartDB initializes (max 10 seconds)...'
+      
+      // Poll for database creation (max 10 seconds)
+      let attempts = 0
+      const maxAttempts = 20 // 20 * 500ms = 10 seconds
+      
+      const checkInterval = setInterval(async () => {
+        attempts++
+        message.value = `Waiting for ChartDB to initialize (${attempts}/${maxAttempts})...`
+        
+        try {
+          const dbReady = await chartDB.checkDatabase()
+          if (dbReady) {
+            clearInterval(checkInterval)
+            try {
+              chartdbWindow.close()
+            } catch (e) {}
+            // Database ready, retry sync
+            syncCloudData()
+            return
+          }
+        } catch (e) {
+          // Ignore errors during check
+        }
+        
+        if (attempts >= maxAttempts) {
+          clearInterval(checkInterval)
+          try {
+            chartdbWindow.close()
+          } catch (e) {}
+          
+          status.value = 'error'
+          title.value = 'ChartDB Not Initialized'
+          message.value = 'ChartDB did not initialize in time. Please create a diagram in ChartDB and try again.'
+        }
+      }, 500)
+    }
+
     onMounted(() => {
       syncCloudData()
     })
@@ -199,10 +255,12 @@ export default {
       title,
       message,
       diagramCount,
+      dbNotInitialized,
       retrySync,
       skipSync,
       goToDashboard,
-      goToApplication
+      goToApplication,
+      openChartDBAndWait
     }
   }
 }
