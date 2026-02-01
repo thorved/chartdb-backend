@@ -55,6 +55,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { chartDB } from '../chartdb-client'
+import { diagramFromJSON } from '../utils/diagram-export-import'
 
   export default {
   name: 'Sync',
@@ -154,8 +155,13 @@ import { chartDB } from '../chartdb-client'
           })
           
           try {
-            // Use the new JSON-based save method
-            await chartDB.saveDiagramJSON(diagram)
+            // Use ChartDB-compatible import function to clone with new IDs
+            // This ensures relationships, areas, and all entities are properly remapped
+            const diagramJSON = JSON.stringify(diagram)
+            const clonedDiagram = diagramFromJSON(diagramJSON)
+            
+            // Save the cloned diagram to IndexedDB
+            await chartDB.saveDiagramJSON(clonedDiagram)
             console.log(`[Sync] Successfully saved diagram ${i + 1}`)
           } catch (saveErr) {
             console.error(`[Sync] Failed to save diagram ${i + 1}:`, saveErr)

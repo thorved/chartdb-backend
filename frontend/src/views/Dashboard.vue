@@ -273,6 +273,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { api } from '../api'
 import { chartDB } from '../chartdb-client'
+import { diagramFromJSON } from '../utils/diagram-export-import'
 
 export default {
   name: 'Dashboard',
@@ -530,11 +531,16 @@ export default {
         // Get diagram data from server
         const diagramData = await api.pullDiagram(diagram.diagram_id)
         
+        // Use ChartDB-compatible import function to clone with new IDs
+        // This ensures relationships, areas, and all entities are properly remapped
+        const diagramJSON = JSON.stringify(diagramData)
+        const clonedDiagram = diagramFromJSON(diagramJSON)
+        
         // Make sure database is open (will create if deleted)
         await chartDB.reopen()
         
-        // Save to IndexedDB using JSON format
-        await chartDB.saveDiagramJSON(diagramData)
+        // Save to IndexedDB using the cloned diagram
+        await chartDB.saveDiagramJSON(clonedDiagram)
         
         // Reload local diagrams
         dbAvailable.value = true
@@ -556,11 +562,16 @@ export default {
         // Get specific version from server
         const diagramData = await api.pullDiagram(diagramId, version)
         
+        // Use ChartDB-compatible import function to clone with new IDs
+        // This ensures relationships, areas, and all entities are properly remapped
+        const diagramJSON = JSON.stringify(diagramData)
+        const clonedDiagram = diagramFromJSON(diagramJSON)
+        
         // Make sure database is open (will create if deleted)
         await chartDB.reopen()
         
-        // Save to IndexedDB using JSON format
-        await chartDB.saveDiagramJSON(diagramData)
+        // Save to IndexedDB using the cloned diagram
+        await chartDB.saveDiagramJSON(clonedDiagram)
         
         // Reload local diagrams
         dbAvailable.value = true

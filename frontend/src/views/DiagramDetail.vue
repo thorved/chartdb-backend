@@ -98,6 +98,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api'
 import { chartDB } from '../chartdb-client'
+import { diagramFromJSON } from '../utils/diagram-export-import'
 
 export default {
   name: 'DiagramDetail',
@@ -154,8 +155,13 @@ export default {
         // Get diagram data from server
         const diagramData = await api.pullDiagram(diagramId)
         
-        // Save directly to IndexedDB
-        await chartDB.saveDiagramFull(diagramData)
+        // Use ChartDB-compatible import function to clone with new IDs
+        // This ensures relationships, areas, and all entities are properly remapped
+        const diagramJSON = JSON.stringify(diagramData)
+        const clonedDiagram = diagramFromJSON(diagramJSON)
+        
+        // Save to IndexedDB using the cloned diagram
+        await chartDB.saveDiagramJSON(clonedDiagram)
         
         showToast('Diagram pulled to browser!')
       } catch (err) {
@@ -172,8 +178,13 @@ export default {
         // Get specific version from server
         const diagramData = await api.pullDiagram(diagramId, version)
         
-        // Save directly to IndexedDB
-        await chartDB.saveDiagramFull(diagramData)
+        // Use ChartDB-compatible import function to clone with new IDs
+        // This ensures relationships, areas, and all entities are properly remapped
+        const diagramJSON = JSON.stringify(diagramData)
+        const clonedDiagram = diagramFromJSON(diagramJSON)
+        
+        // Save to IndexedDB using the cloned diagram
+        await chartDB.saveDiagramJSON(clonedDiagram)
         
         showToast(`Version ${version} pulled to browser!`)
       } catch (err) {

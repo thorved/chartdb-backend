@@ -108,6 +108,7 @@
      * 
      * NOTE: For SYNC operations, we preserve the original diagram ID
      * to avoid creating duplicate diagrams. Only internal entity IDs are regenerated.
+     * All references (relationships, dependencies) are properly remapped to new IDs.
      */
     function cloneDiagramForExport(diagram) {
         const generateId = createRunningIdGenerator();
@@ -163,31 +164,54 @@
             });
         }
 
-        // Clone relationships with updated references
+        // Clone relationships with updated references - CRITICAL for sync to work
         if (diagram.relationships) {
-            clonedDiagram.relationships = diagram.relationships.map(rel => ({
-                ...rel,
-                id: generateId(),
-                sourceTableId: idMap.get(rel.sourceTableId) || rel.sourceTableId,
-                targetTableId: idMap.get(rel.targetTableId) || rel.targetTableId,
-                sourceFieldId: idMap.get(rel.sourceFieldId) || rel.sourceFieldId,
-                targetFieldId: idMap.get(rel.targetFieldId) || rel.targetFieldId,
-                createdAt: rel.createdAt || Date.now(),
-            }));
+            clonedDiagram.relationships = diagram.relationships.map(rel => {
+                const newSourceTableId = idMap.get(rel.sourceTableId);
+                const newTargetTableId = idMap.get(rel.targetTableId);
+                const newSourceFieldId = idMap.get(rel.sourceFieldId);
+                const newTargetFieldId = idMap.get(rel.targetFieldId);
+                
+                // Only include relationships where all references can be remapped
+                if (!newSourceTableId || !newTargetTableId || !newSourceFieldId || !newTargetFieldId) {
+                    console.warn('[cloneDiagramForExport] Skipping relationship with missing references:', rel.id);
+                    return null;
+                }
+                
+                return {
+                    ...rel,
+                    id: generateId(),
+                    sourceTableId: newSourceTableId,
+                    targetTableId: newTargetTableId,
+                    sourceFieldId: newSourceFieldId,
+                    targetFieldId: newTargetFieldId,
+                    createdAt: rel.createdAt || Date.now(),
+                };
+            }).filter(rel => rel !== null);
         }
 
         // Clone dependencies with updated references
         if (diagram.dependencies) {
-            clonedDiagram.dependencies = diagram.dependencies.map(dep => ({
-                ...dep,
-                id: generateId(),
-                tableId: idMap.get(dep.tableId) || dep.tableId,
-                dependentTableId: idMap.get(dep.dependentTableId) || dep.dependentTableId,
-                createdAt: dep.createdAt || Date.now(),
-            }));
+            clonedDiagram.dependencies = diagram.dependencies.map(dep => {
+                const newTableId = idMap.get(dep.tableId);
+                const newDependentTableId = idMap.get(dep.dependentTableId);
+                
+                if (!newTableId || !newDependentTableId) {
+                    console.warn('[cloneDiagramForExport] Skipping dependency with missing references:', dep.id);
+                    return null;
+                }
+                
+                return {
+                    ...dep,
+                    id: generateId(),
+                    tableId: newTableId,
+                    dependentTableId: newDependentTableId,
+                    createdAt: dep.createdAt || Date.now(),
+                };
+            }).filter(dep => dep !== null);
         }
 
-        // Clone areas, notes, custom types
+        // Clone areas with new IDs
         if (diagram.areas) {
             clonedDiagram.areas = diagram.areas.map(area => ({
                 ...area,
@@ -195,6 +219,7 @@
             }));
         }
 
+        // Clone notes with new IDs
         if (diagram.notes) {
             clonedDiagram.notes = diagram.notes.map(note => ({
                 ...note,
@@ -202,6 +227,7 @@
             }));
         }
 
+        // Clone custom types with new IDs
         if (diagram.customTypes) {
             clonedDiagram.customTypes = diagram.customTypes.map(ct => ({
                 ...ct,

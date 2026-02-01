@@ -89,31 +89,54 @@ export function cloneDiagram(diagram, options = {}) {
         })
     }
 
-    // Clone relationships with updated references
+    // Clone relationships with updated references - CRITICAL for relationships to work
     if (diagram.relationships) {
-        clonedDiagram.relationships = diagram.relationships.map(rel => ({
-            ...rel,
-            id: idGenerator(),
-            sourceTableId: idMap.get(rel.sourceTableId) || rel.sourceTableId,
-            targetTableId: idMap.get(rel.targetTableId) || rel.targetTableId,
-            sourceFieldId: idMap.get(rel.sourceFieldId) || rel.sourceFieldId,
-            targetFieldId: idMap.get(rel.targetFieldId) || rel.targetFieldId,
-            createdAt: rel.createdAt || Date.now(),
-        }))
+        clonedDiagram.relationships = diagram.relationships.map(rel => {
+            const newSourceTableId = idMap.get(rel.sourceTableId)
+            const newTargetTableId = idMap.get(rel.targetTableId)
+            const newSourceFieldId = idMap.get(rel.sourceFieldId)
+            const newTargetFieldId = idMap.get(rel.targetFieldId)
+            
+            // Only include relationships where all references can be remapped
+            if (!newSourceTableId || !newTargetTableId || !newSourceFieldId || !newTargetFieldId) {
+                console.warn('[cloneDiagram] Skipping relationship with missing references:', rel.id)
+                return null
+            }
+            
+            return {
+                ...rel,
+                id: idGenerator(),
+                sourceTableId: newSourceTableId,
+                targetTableId: newTargetTableId,
+                sourceFieldId: newSourceFieldId,
+                targetFieldId: newTargetFieldId,
+                createdAt: rel.createdAt || Date.now(),
+            }
+        }).filter(rel => rel !== null)
     }
 
     // Clone dependencies with updated references
     if (diagram.dependencies) {
-        clonedDiagram.dependencies = diagram.dependencies.map(dep => ({
-            ...dep,
-            id: idGenerator(),
-            tableId: idMap.get(dep.tableId) || dep.tableId,
-            dependentTableId: idMap.get(dep.dependentTableId) || dep.dependentTableId,
-            createdAt: dep.createdAt || Date.now(),
-        }))
+        clonedDiagram.dependencies = diagram.dependencies.map(dep => {
+            const newTableId = idMap.get(dep.tableId)
+            const newDependentTableId = idMap.get(dep.dependentTableId)
+            
+            if (!newTableId || !newDependentTableId) {
+                console.warn('[cloneDiagram] Skipping dependency with missing references:', dep.id)
+                return null
+            }
+            
+            return {
+                ...dep,
+                id: idGenerator(),
+                tableId: newTableId,
+                dependentTableId: newDependentTableId,
+                createdAt: dep.createdAt || Date.now(),
+            }
+        }).filter(dep => dep !== null)
     }
 
-    // Clone areas
+    // Clone areas with new IDs
     if (diagram.areas) {
         clonedDiagram.areas = diagram.areas.map(area => ({
             ...area,
@@ -121,7 +144,7 @@ export function cloneDiagram(diagram, options = {}) {
         }))
     }
 
-    // Clone notes
+    // Clone notes with new IDs
     if (diagram.notes) {
         clonedDiagram.notes = diagram.notes.map(note => ({
             ...note,
@@ -129,7 +152,7 @@ export function cloneDiagram(diagram, options = {}) {
         }))
     }
 
-    // Clone custom types
+    // Clone custom types with new IDs
     if (diagram.customTypes) {
         clonedDiagram.customTypes = diagram.customTypes.map(ct => ({
             ...ct,
@@ -154,8 +177,11 @@ export function diagramToJSON(diagram) {
 /**
  * Parse diagram from JSON input (for import/server retrieval)
  * Mirrors ChartDB's diagramFromJSONInput
+ * 
+ * For sync operations: preserves diagram ID but clones all entities with new IDs
+ * This prevents ID conflicts while maintaining diagram identity
  */
-export function diagramFromJSON(jsonString) {
+export function diagramFromJSON(jsonString, options = {}) {
     let loadedDiagram
 
     try {
@@ -169,8 +195,12 @@ export function diagramFromJSON(jsonString) {
         throw new Error('Invalid diagram format: missing required fields')
     }
 
-    // Clone with new IDs (ChartDB always assigns new IDs on import)
-    const { diagram } = cloneDiagram(loadedDiagram)
+    // Clone with new IDs but preserve diagram ID for sync
+    // This matches ChartDB's behavior but keeps the same diagram identity
+    const { diagram } = cloneDiagram(loadedDiagram, {
+        preserveDiagramId: true,
+        ...options
+    })
 
     return diagram
 }
